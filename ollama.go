@@ -124,7 +124,12 @@ func handleChat(w http.ResponseWriter, r *http.Request, cfg Config) {
 		return
 	}
 	clientModel := req.Model
-	backend, upstreamModel := cfg.route(req.Model)
+	backend, upstreamModel, rerr := cfg.route(req.Model)
+	if rerr != nil {
+		metrics.Record(clientModel, clientModel, app, "/api/chat", 400, 0, 0, time.Since(start), true)
+		writeJSON(w, 400, map[string]string{"error": rerr.Error()})
+		return
+	}
 	oreq := toOpenAIRequest(upstreamModel, req.Messages, req.Format, req.Options.Temperature, req.Options.TopP, req.Options.NumPredict)
 	var usage Usage
 
@@ -181,7 +186,12 @@ func handleGenerate(w http.ResponseWriter, r *http.Request, cfg Config) {
 		return
 	}
 	clientModel := req.Model
-	backend, upstreamModel := cfg.route(req.Model)
+	backend, upstreamModel, rerr := cfg.route(req.Model)
+	if rerr != nil {
+		metrics.Record(clientModel, clientModel, app, "/api/generate", 400, 0, 0, time.Since(start), true)
+		writeJSON(w, 400, map[string]string{"error": rerr.Error()})
+		return
+	}
 
 	messages := make([]OpenAIMessage, 0, 2)
 	if req.System != "" {

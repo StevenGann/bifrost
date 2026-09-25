@@ -86,6 +86,7 @@ type OpenAIChatResponse struct {
 }
 
 func upstreamReq(b Backend, method, path string, body []byte) (*http.Request, error) {
+	body = maybeRedact(b, body)
 	req, err := http.NewRequest(method, b.BaseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err

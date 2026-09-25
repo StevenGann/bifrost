@@ -19,6 +19,8 @@ routing, embeddings, privacy routing, caching, resilience, and more).
   local vLLM/Ollama server without touching any client.
 - **Observable.** Prometheus `/metrics` with token, cost, and latency accounting.
 - **Tiny.** A single ~10 MB static Go binary, no runtime deps, no state.
+- **Private by default.** PII is scrubbed from cloud-bound traffic, and
+  `private:*` models never leave the LAN.
 
 ## Quick start
 
@@ -81,6 +83,17 @@ To split metrics by caller, send an `X-Bifrost-App` header (e.g.
 
 Cost is priced at DeepSeek's official cache-miss rates, doubled during peak hours
 (Mon–Fri 01:00–04:00 and 06:00–10:00 UTC). Override or add models via `PRICING`.
+
+## Privacy
+
+- **PII redaction.** Every request bound for a *cloud* backend (base URL not
+  loopback/RFC1918/`.lab`) has obvious identifiers scrubbed before it leaves the
+  LAN: emails, phones, card numbers, SSNs, IPs, API/SSH keys, PEM private keys.
+- **`private:` models.** A client model named `private:*` refuses to route to a
+  non-local backend — it returns `400` rather than silently sending data to the
+  cloud. Point `private:*` at a local backend in `ROUTES` and it just works.
+- **Local auto-detection.** Loopback, RFC1918, and `.lab`/`.local`/etc. backends
+  are treated as local (never redacted); override with `"local": true`/`false`.
 
 ## API surface
 

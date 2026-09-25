@@ -43,27 +43,46 @@ func TestParseModels(t *testing.T) {
 func TestRoute(t *testing.T) {
 	cfg := Config{
 		Backends: map[string]Backend{
-			"deepseek": {Name: "deepseek", BaseURL: "https://api.deepseek.com"},
-			"thoth":    {Name: "thoth", BaseURL: "http://thoth.lab:8000/v1"},
+			"deepseek": {Name: "deepseek", BaseURL: "https://api.deepseek.com", Local: false},
+			"thoth":    {Name: "thoth", BaseURL: "http://thoth.lab:8000/v1", Local: true},
 		},
 		Default: "deepseek",
 		Routes: map[string]Route{
 			"coach":         {Name: "coach", Backend: "deepseek", Upstream: "deepseek-v4-flash"},
-			"private-llama": {Name: "private-llama", Backend: "thoth", Upstream: "llama3.1-70b"},
+			"private:llama": {Name: "private:llama", Backend: "thoth", Upstream: "llama3.1-70b"},
 		},
 	}
 
-	b, up := cfg.route("coach")
-	if b.Name != "deepseek" || up != "deepseek-v4-flash" {
-		t.Errorf("coach routed to %s/%s, want deepseek/deepseek-v4-flash", b.Name, up)
+	b, up, err := cfg.route("coach")
+	if err != nil || b.Name != "deepseek" || up != "deepseek-v4-flash" {
+		t.Errorf("coach routed to %s/%s err=%v, want deepseek/deepseek-v4-flash", b.Name, up, err)
 	}
-	b, up = cfg.route("private-llama")
-	if b.Name != "thoth" || up != "llama3.1-70b" {
-		t.Errorf("private-llama routed to %s/%s, want thoth/llama3.1-70b", b.Name, up)
+	b, up, err = cfg.route("private:llama")
+	if err != nil || b.Name != "thoth" || up != "llama3.1-70b" {
+		t.Errorf("private:llama routed to %s/%s err=%v, want thoth/llama3.1-70b", b.Name, up, err)
 	}
-	b, up = cfg.route("unknown-model")
-	if b.Name != "deepseek" || up != "unknown-model" {
-		t.Errorf("unknown routed to %s/%s, want deepseek/unknown-model", b.Name, up)
+	b, up, err = cfg.route("unknown-model")
+	if err != nil || b.Name != "deepseek" || up != "unknown-model" {
+		t.Errorf("unknown routed to %s/%s err=%v, want deepseek/unknown-model", b.Name, up, err)
+	}
+}
+
+func TestPrivateRouteRejectsCloud(t *testing.T) {
+	cfg := Config{
+		Backends: map[string]Backend{
+			"deepseek": {Name: "deepseek", BaseURL: "https://api.deepseek.com", Local: false},
+		},
+		Default: "deepseek",
+		Routes:  map[string]Route{},
+	}
+	// private model with no route falls through to the cloud default -> refused.
+	if _, _, err := cfg.route("private:missing"); err == nil {
+		t.Errorf("private:missing should be rejected (no local backend)")
+	}
+	// private model explicitly routed to a cloud backend -> refused.
+	cfg.Routes["private:x"] = Route{Name: "private:x", Backend: "deepseek", Upstream: "deepseek-v4-flash"}
+	if _, _, err := cfg.route("private:x"); err == nil {
+		t.Errorf("private:x should be rejected (cloud backend)")
 	}
 }
 

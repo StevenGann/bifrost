@@ -12,10 +12,13 @@ below turns it into a bridge with a real decision layer.
 
 ## Current state
 
-- Single upstream (DeepSeek, OpenAI-compatible), configured via env.
+- **Routing (v0.4):** multi-backend registry + routing table (`BACKENDS` +
+  `ROUTES`), with a `private:` prefix that refuses to route to cloud backends.
 - Ollama-native (`/api/tags`, `/api/chat`, `/api/generate`) **and** OpenAI
   (`/v1/models`, `/v1/chat/completions`) APIs, so any client works.
 - Model aliasing (`coach` → `deepseek-v4-flash`).
+- **Privacy (v0.5):** PII redaction (emails, phones, cards, SSNs, IPs, keys) on
+  all cloud-bound traffic; local backends skip it.
 - **Observability (v0.2–v0.3):** Prometheus `/metrics` — request counts, token in/out,
   estimated cost (cache-miss rates, peak/off-peak aware), latency histogram, and
   error counts, labeled by model and app (`X-Bifrost-App` header) — plus a bespoke
@@ -50,12 +53,13 @@ Gemini for embeddings, semantic search over the Caldera vault, future RAG). Serv
 `/v1/embeddings` + `/api/embeddings` backed by a local model, collapsing all of
 that into one endpoint and dropping a provider.
 
-### 4. Privacy routing + PII redaction ⬜
+### 4. Privacy routing + PII redaction — ✅ shipped (v0.5)
 
-A policy layer: requests tagged sensitive route to local models instead of leaving
-the house, and a redaction pass strips PII (names, addresses, credentials) from
-anything that *does* go to a third-party backend. "Sensitive stuff never leaves
-the LAN" as a first-class, configurable rule.
+`private:*` models refuse to route to a non-local backend (a hard `400`, not a
+silent leak). All cloud-bound traffic has obvious PII scrubbed before it leaves
+the LAN — emails, phones, card numbers, SSNs, IPs, API/SSH keys, PEM private
+keys. Local backends are auto-detected (loopback/RFC1918/`.lab`) and skip
+redaction.
 
 ### 5. Caching ⬜
 

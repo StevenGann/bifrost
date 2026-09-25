@@ -2,8 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -14,6 +17,7 @@ type Backend struct {
 	Name    string
 	BaseURL string
 	APIKey  string
+	Local   bool // true when the backend is on the LAN (skip PII redaction)
 }
 
 // Route maps a client-facing model name to a backend + upstream model name.
@@ -49,11 +53,43 @@ func normalizeBase(base string) string {
 	return base
 }
 
+// isLocalHost reports whether a base URL points at the LAN (loopback, RFC1918,
+// or a private TLD), so Bifrost knows it can skip PII redaction for it.
+func isLocalHost(base string) bool {
+	u, err := url.Parse(base)
+	if err != nil {
+		return false
+	}
+	h := strings.ToLower(u.Hostname())
+	if h == "localhost" || h == "::1" {
+		return true
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+	}
+	for _, suf := range []string{".lab", ".local", ".internal", ".lan", ".home"} {
+		if strings.HasSuffix(h, suf) {
+			return true
+		}
+	}
+	return false
+}
+
 // backendConfig is the JSON shape of the BACKENDS env.
 type backendConfig struct {
 	Name      string `json:"name"`
 	BaseURL   string `json:"base_url"`
 	APIKeyEnv string `json:"api_key_env"`
+	Local     *bool  `json:"local"`
+}
+
+// backendIsLocal resolves a backend's local-ness: explicit `local` field wins,
+// otherwise it is inferred from the base URL host.
+func backendIsLocal(bc backendConfig) bool {
+	if bc.Local != nil {
+		return *bc.Local
+	}
+	return isLocalHost(normalizeBase(bc.BaseURL))
 }
 
 // splitRoute splits a route target "backend/model" into its parts.
@@ -100,7 +136,7 @@ func loadConfig() Config {
 			if bc.Name == "" || bc.BaseURL == "" {
 				continue
 			}
-			cfg.Backends[bc.Name] = Backend{Name: bc.Name, BaseURL: normalizeBase(bc.BaseURL), APIKey: os.Getenv(bc.APIKeyEnv)}
+			cfg.Backends[bc.Name] = Backend{Name: bc.Name, BaseURL: normalizeBase(bc.BaseURL), APIKey: os.Getenv(bc.APIKeyEnv), Local: backendIsLocal(bc)}
 			if i == 0 {
 				cfg.Default = bc.Name
 			}
@@ -126,7 +162,7 @@ func loadConfig() Config {
 		if base == "" {
 			base = "https://api.deepseek.com"
 		}
-		cfg.Backends["default"] = Backend{Name: "default", BaseURL: base, APIKey: os.Getenv("UPSTREAM_API_KEY")}
+		cfg.Backends["default"] = Backend{Name: "default", BaseURL: base, APIKey: os.Getenv("UPSTREAM_API_KEY"), Local: isLocalHost(base)}
 		cfg.Default = "default"
 		for _, r := range parseModels(os.Getenv("MODELS"), "default") {
 			cfg.Routes[r.Name] = r
@@ -141,13 +177,23 @@ func loadConfig() Config {
 
 // route resolves a requested model name to its backend + upstream model name.
 // Unknown names fall back to the default backend, passed through unchanged.
-func (c Config) route(name string) (Backend, string) {
+// A `private:`-prefixed name must resolve to a local backend; otherwise the
+// request is refused rather than leaking to a cloud upstream.
+func (c Config) route(name string) (Backend, string, error) {
+	wantsLocal := strings.HasPrefix(name, "private:")
 	if r, ok := c.Routes[name]; ok {
 		if b, ok := c.Backends[r.Backend]; ok {
-			return b, r.Upstream
+			if wantsLocal && !b.Local {
+				return Backend{}, "", fmt.Errorf("model %q requires a local backend but %q is not local", name, r.Backend)
+			}
+			return b, r.Upstream, nil
 		}
 	}
-	return c.defaultBackend(), name
+	b := c.defaultBackend()
+	if wantsLocal && !b.Local {
+		return Backend{}, "", fmt.Errorf("model %q requires a local backend but none is configured", name)
+	}
+	return b, name, nil
 }
 
 func (c Config) defaultBackend() Backend {

@@ -35,7 +35,12 @@ func handleOpenAIChat(w http.ResponseWriter, r *http.Request, cfg Config) {
 		return
 	}
 	clientModel, _ := body["model"].(string)
-	backend, upstreamModel := cfg.route(clientModel)
+	backend, upstreamModel, rerr := cfg.route(clientModel)
+	if rerr != nil {
+		metrics.Record(clientModel, clientModel, app, "/v1/chat/completions", 400, 0, 0, time.Since(start), true)
+		writeJSON(w, 400, map[string]string{"error": rerr.Error()})
+		return
+	}
 	if _, ok := body["model"].(string); ok {
 		body["model"] = upstreamModel
 	}
