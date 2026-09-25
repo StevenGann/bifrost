@@ -114,12 +114,17 @@ func toOpenAIRequest(cfg Config, model string, messages []OpenAIMessage, format 
 }
 
 func handleChat(w http.ResponseWriter, r *http.Request, cfg Config) {
+	app := appFrom(r)
+	start := time.Now()
 	var req ollamaChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, 400, map[string]string{"error": "bad request"})
 		return
 	}
+	clientModel := req.Model
+	upstreamModel := cfg.upstreamModel(req.Model)
 	oreq := toOpenAIRequest(cfg, req.Model, req.Messages, req.Format, req.Options.Temperature, req.Options.TopP, req.Options.NumPredict)
+	var usage Usage
 
 	if req.Stream {
 		w.Header().Set("Content-Type", "application/x-ndjson")
@@ -140,17 +145,20 @@ func handleChat(w http.ResponseWriter, r *http.Request, cfg Config) {
 			}
 			fl.Flush()
 			return nil
-		})
+		}, &usage)
 		_ = enc.Encode(ollamaStreamChunk{Model: req.Model, CreatedAt: nowRFC3339(), Message: ollamaStreamMsg{Role: "assistant"}, Done: true})
 		fl.Flush()
 		if err != nil {
 			log.Printf("chat stream error: %v", err)
 		}
+		metrics.Record(clientModel, upstreamModel, app, "/api/chat", 200, usage.PromptTokens, usage.CompletionTokens, time.Since(start), err != nil)
 		return
 	}
 
-	resp, err := chat(cfg, oreq)
+	resp, u, err := chat(cfg, oreq)
+	usage = u
 	if err != nil {
+		metrics.Record(clientModel, upstreamModel, app, "/api/chat", 502, usage.PromptTokens, usage.CompletionTokens, time.Since(start), true)
 		writeJSON(w, 502, map[string]string{"error": err.Error()})
 		return
 	}
@@ -159,14 +167,19 @@ func handleChat(w http.ResponseWriter, r *http.Request, cfg Config) {
 		msg = ollamaStreamMsg{Role: resp.Choices[0].Message.Role, Content: resp.Choices[0].Message.Content}
 	}
 	writeJSON(w, 200, ollamaChatResponse{Model: req.Model, CreatedAt: nowRFC3339(), Message: msg, Done: true})
+	metrics.Record(clientModel, upstreamModel, app, "/api/chat", 200, usage.PromptTokens, usage.CompletionTokens, time.Since(start), false)
 }
 
 func handleGenerate(w http.ResponseWriter, r *http.Request, cfg Config) {
+	app := appFrom(r)
+	start := time.Now()
 	var req ollamaGenerateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, 400, map[string]string{"error": "bad request"})
 		return
 	}
+	clientModel := req.Model
+	upstreamModel := cfg.upstreamModel(req.Model)
 
 	messages := make([]OpenAIMessage, 0, 2)
 	if req.System != "" {
@@ -175,6 +188,7 @@ func handleGenerate(w http.ResponseWriter, r *http.Request, cfg Config) {
 	messages = append(messages, OpenAIMessage{Role: "user", Content: req.Prompt})
 
 	oreq := toOpenAIRequest(cfg, req.Model, messages, req.Format, req.Options.Temperature, req.Options.TopP, req.Options.NumPredict)
+	var usage Usage
 
 	if req.Stream {
 		w.Header().Set("Content-Type", "application/x-ndjson")
@@ -190,17 +204,20 @@ func handleGenerate(w http.ResponseWriter, r *http.Request, cfg Config) {
 			}
 			fl.Flush()
 			return nil
-		})
+		}, &usage)
 		_ = enc.Encode(ollamaGenerateResponse{Model: req.Model, CreatedAt: nowRFC3339(), Response: "", Done: true})
 		fl.Flush()
 		if err != nil {
 			log.Printf("generate stream error: %v", err)
 		}
+		metrics.Record(clientModel, upstreamModel, app, "/api/generate", 200, usage.PromptTokens, usage.CompletionTokens, time.Since(start), err != nil)
 		return
 	}
 
-	resp, err := chat(cfg, oreq)
+	resp, u, err := chat(cfg, oreq)
+	usage = u
 	if err != nil {
+		metrics.Record(clientModel, upstreamModel, app, "/api/generate", 502, usage.PromptTokens, usage.CompletionTokens, time.Since(start), true)
 		writeJSON(w, 502, map[string]string{"error": err.Error()})
 		return
 	}
@@ -209,4 +226,5 @@ func handleGenerate(w http.ResponseWriter, r *http.Request, cfg Config) {
 		content = resp.Choices[0].Message.Content
 	}
 	writeJSON(w, 200, ollamaGenerateResponse{Model: req.Model, CreatedAt: nowRFC3339(), Response: content, Done: true})
+	metrics.Record(clientModel, upstreamModel, app, "/api/generate", 200, usage.PromptTokens, usage.CompletionTokens, time.Since(start), false)
 }

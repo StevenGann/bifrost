@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 )
 
 // handleOpenAIModels serves the OpenAI-compatible model list from the
@@ -24,22 +25,30 @@ func handleOpenAIModels(w http.ResponseWriter, cfg Config) {
 // object (so client-specific fields survive), remaps the model alias, and
 // forwards to the upstream verbatim — preserving streaming SSE or JSON.
 func handleOpenAIChat(w http.ResponseWriter, r *http.Request, cfg Config) {
+	app := appFrom(r)
+	start := time.Now()
 	var body map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, 400, map[string]string{"error": "bad request"})
 		return
 	}
-	if m, ok := body["model"].(string); ok {
-		body["model"] = cfg.upstreamModel(m)
+	clientModel, _ := body["model"].(string)
+	upstreamModel := cfg.upstreamModel(clientModel)
+	if _, ok := body["model"].(string); ok {
+		body["model"] = upstreamModel
 	}
 	b, err := json.Marshal(body)
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": "internal error"})
 		return
 	}
-	if err := forwardRaw(cfg, "/chat/completions", b, w); err != nil {
-		// If headers already went out we can't recover, but forwardRaw only
-		// returns before writing on a dial/request error.
+
+	var usage Usage
+	status, err := forwardRaw(cfg, "/chat/completions", b, w, &usage)
+	if err != nil && status == 0 {
+		status = 502
 		writeJSON(w, 502, map[string]string{"error": err.Error()})
 	}
+	isErr := err != nil || status >= 400
+	metrics.Record(clientModel, upstreamModel, app, "/v1/chat/completions", status, usage.PromptTokens, usage.CompletionTokens, time.Since(start), isErr)
 }

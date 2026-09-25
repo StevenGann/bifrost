@@ -22,6 +22,11 @@ type Config struct {
 	Models       []ModelAlias
 }
 
+// metrics is the package-level collector. It is initialized to a working
+// default here so tests never hit a nil receiver; main() replaces it with
+// env-configured pricing.
+var metrics = newMetrics(defaultPricing())
+
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -84,11 +89,38 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// appFrom identifies the calling app for metrics from the X-Bifrost-App header,
+// falling back to "unknown".
+func appFrom(r *http.Request) string {
+	if a := strings.TrimSpace(r.Header.Get("X-Bifrost-App")); a != "" {
+		return a
+	}
+	return "unknown"
+}
+
+// loadPricing merges env PRICING (JSON: {"model":{"input":x,"output":y}}) over
+// the built-in DeepSeek defaults.
+func loadPricing() map[string]pricing {
+	p := defaultPricing()
+	if raw := os.Getenv("PRICING"); raw != "" {
+		var extra map[string]pricing
+		if err := json.Unmarshal([]byte(raw), &extra); err != nil {
+			log.Printf("WARNING: ignoring malformed PRICING: %v", err)
+		} else {
+			for k, v := range extra {
+				p[k] = v
+			}
+		}
+	}
+	return p
+}
+
 func main() {
 	cfg := loadConfig()
 	if cfg.UpstreamKey == "" {
 		log.Println("WARNING: UPSTREAM_API_KEY is empty — upstream calls will be unauthenticated")
 	}
+	metrics = newMetrics(loadPricing())
 
 	mux := http.NewServeMux()
 
@@ -106,9 +138,11 @@ func main() {
 	mux.HandleFunc("GET /v1/models", func(w http.ResponseWriter, r *http.Request) { handleOpenAIModels(w, cfg) })
 	mux.HandleFunc("POST /v1/chat/completions", func(w http.ResponseWriter, r *http.Request) { handleOpenAIChat(w, r, cfg) })
 
+	// Ops
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]string{"status": "ok"})
 	})
+	mux.Handle("GET /metrics", metrics.Handler())
 
 	addr := ":" + cfg.Port
 	log.Printf("bifrost listening on %s  upstream=%s  models=%d", addr, cfg.UpstreamBase, len(cfg.Models))
