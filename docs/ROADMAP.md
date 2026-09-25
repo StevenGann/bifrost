@@ -25,12 +25,13 @@ below turns it into a bridge with a real decision layer.
 
 ## Initiatives (priority order)
 
-### 1. Multi-backend routing — *the "bridge" part* ⬜
+### 1. Multi-backend routing — ✅ shipped (v0.4)
 
-Generalize the single upstream into a **routing table**: `coach` → DeepSeek-flash,
-`private:*` → a local model on Thoth (2× RTX 6000 Ada ≈ 96 GB VRAM), `embedding:*`
-→ a local embedding model. Same API to every consumer; the *routing* is Bifrost's
-job. This is what makes Thoth/Epsilon instantly useful the moment they power on.
+`BACKENDS` (JSON array of backends with base URL + key) + `ROUTES` (client-model →
+`backend/upstream-model`). Unknown names fall back to the default backend
+unchanged. `coach` → DeepSeek today; `private:*` → Thoth becomes a one-line
+`ROUTES` entry the moment a local backend exists. Legacy `UPSTREAM_BASE_URL` /
+`MODELS` still work as a single default backend.
 
 ### 2. Usage & cost observability — ✅ shipped (v0.2 + v0.3)
 

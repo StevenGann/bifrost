@@ -9,9 +9,27 @@ import (
 	"testing"
 )
 
+func testConfig(baseURL string) Config {
+	return Config{
+		Port: "11434",
+		Backends: map[string]Backend{
+			"default": {Name: "default", BaseURL: baseURL, APIKey: "testkey"},
+		},
+		Default: "default",
+		Routes: map[string]Route{
+			"coach":           {Name: "coach", Backend: "default", Upstream: "deepseek-v4-flash"},
+			"deepseek-v4-pro": {Name: "deepseek-v4-pro", Backend: "default", Upstream: "deepseek-v4-pro"},
+		},
+	}
+}
+
 func TestParseModels(t *testing.T) {
-	got := parseModels("a,b=up1, c = up2 ")
-	want := []ModelAlias{{Name: "a", Upstream: "a"}, {Name: "b", Upstream: "up1"}, {Name: "c", Upstream: "up2"}}
+	got := parseModels("a,b=up1, c = up2 ", "default")
+	want := []Route{
+		{Name: "a", Backend: "default", Upstream: "a"},
+		{Name: "b", Backend: "default", Upstream: "up1"},
+		{Name: "c", Backend: "default", Upstream: "up2"},
+	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d models, want %d", len(got), len(want))
 	}
@@ -22,23 +40,39 @@ func TestParseModels(t *testing.T) {
 	}
 }
 
-func TestUpstreamModel(t *testing.T) {
-	cfg := Config{Models: []ModelAlias{{Name: "coach", Upstream: "deepseek-v4-flash"}}}
-	if cfg.upstreamModel("coach") != "deepseek-v4-flash" {
-		t.Errorf("alias not mapped")
+func TestRoute(t *testing.T) {
+	cfg := Config{
+		Backends: map[string]Backend{
+			"deepseek": {Name: "deepseek", BaseURL: "https://api.deepseek.com"},
+			"thoth":    {Name: "thoth", BaseURL: "http://thoth.lab:8000/v1"},
+		},
+		Default: "deepseek",
+		Routes: map[string]Route{
+			"coach":         {Name: "coach", Backend: "deepseek", Upstream: "deepseek-v4-flash"},
+			"private-llama": {Name: "private-llama", Backend: "thoth", Upstream: "llama3.1-70b"},
+		},
 	}
-	if cfg.upstreamModel("unknown") != "unknown" {
-		t.Errorf("unknown name should pass through unchanged")
+
+	b, up := cfg.route("coach")
+	if b.Name != "deepseek" || up != "deepseek-v4-flash" {
+		t.Errorf("coach routed to %s/%s, want deepseek/deepseek-v4-flash", b.Name, up)
+	}
+	b, up = cfg.route("private-llama")
+	if b.Name != "thoth" || up != "llama3.1-70b" {
+		t.Errorf("private-llama routed to %s/%s, want thoth/llama3.1-70b", b.Name, up)
+	}
+	b, up = cfg.route("unknown-model")
+	if b.Name != "deepseek" || up != "unknown-model" {
+		t.Errorf("unknown routed to %s/%s, want deepseek/unknown-model", b.Name, up)
 	}
 }
 
 func TestToOpenAIRequest(t *testing.T) {
-	cfg := Config{Models: []ModelAlias{{Name: "coach", Upstream: "deepseek-v4-flash"}}}
 	temp := 0.5
 	topP := 0.8
-	req := toOpenAIRequest(cfg, "coach", []OpenAIMessage{{Role: "user", Content: "hi"}}, "json", &temp, &topP, 100)
+	req := toOpenAIRequest("deepseek-v4-flash", []OpenAIMessage{{Role: "user", Content: "hi"}}, "json", &temp, &topP, 100)
 	if req.Model != "deepseek-v4-flash" {
-		t.Errorf("model not mapped: %s", req.Model)
+		t.Errorf("model not set: %s", req.Model)
 	}
 	if req.Temperature != 0.5 || req.TopP != 0.8 {
 		t.Errorf("options not passed through: %+v", req)
@@ -71,8 +105,7 @@ func TestChatNonStream(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	cfg := Config{UpstreamBase: mock.URL, UpstreamKey: "testkey", Models: []ModelAlias{{Name: "coach", Upstream: "deepseek-v4-flash"}}}
-
+	cfg := testConfig(mock.URL)
 	req := httptest.NewRequest("POST", "/api/chat", strings.NewReader(`{"model":"coach","messages":[{"role":"user","content":"hi"}],"stream":false}`))
 	rec := httptest.NewRecorder()
 	handleChat(rec, req, cfg)
@@ -92,7 +125,6 @@ func TestChatNonStream(t *testing.T) {
 func TestChatStreamTranslation(t *testing.T) {
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		// role marker (empty content), then content, then done
 		io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"\"}}]}\n\n")
 		io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"he\"}}]}\n\n")
 		io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"llo\"}}]}\n\n")
@@ -100,9 +132,8 @@ func TestChatStreamTranslation(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	cfg := Config{UpstreamBase: mock.URL, UpstreamKey: "k", Models: []ModelAlias{{Name: "m", Upstream: "m"}}}
-
-	req := httptest.NewRequest("POST", "/api/chat", strings.NewReader(`{"model":"m","messages":[{"role":"user","content":"hi"}],"stream":true}`))
+	cfg := testConfig(mock.URL)
+	req := httptest.NewRequest("POST", "/api/chat", strings.NewReader(`{"model":"coach","messages":[{"role":"user","content":"hi"}],"stream":true}`))
 	rec := httptest.NewRecorder()
 	handleChat(rec, req, cfg)
 
@@ -129,7 +160,7 @@ func TestChatStreamTranslation(t *testing.T) {
 }
 
 func TestTagsAndModels(t *testing.T) {
-	cfg := Config{Models: []ModelAlias{{Name: "a", Upstream: "a"}, {Name: "coach", Upstream: "deepseek-v4-flash"}}}
+	cfg := testConfig("https://api.deepseek.com")
 
 	rec := httptest.NewRecorder()
 	handleTags(rec, cfg)

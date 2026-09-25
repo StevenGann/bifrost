@@ -88,8 +88,8 @@ func TestChatCapturesUsage(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	cfg := Config{UpstreamBase: mock.URL, UpstreamKey: "k"}
-	_, usage, err := chat(cfg, OpenAIRequest{Model: "m", Messages: []OpenAIMessage{{Role: "user", Content: "hi"}}})
+	b := Backend{Name: "default", BaseURL: mock.URL, APIKey: "k"}
+	_, usage, err := chat(b, OpenAIRequest{Model: "m", Messages: []OpenAIMessage{{Role: "user", Content: "hi"}}})
 	if err != nil {
 		t.Fatalf("chat: %v", err)
 	}
@@ -107,9 +107,9 @@ func TestStreamChatCapturesUsage(t *testing.T) {
 	}))
 	defer mock.Close()
 
-	cfg := Config{UpstreamBase: mock.URL, UpstreamKey: "k"}
+	b := Backend{Name: "default", BaseURL: mock.URL, APIKey: "k"}
 	var usage Usage
-	err := streamChat(cfg, OpenAIRequest{Model: "m", Messages: []OpenAIMessage{{Role: "user", Content: "hi"}}}, func(string) error { return nil }, &usage)
+	err := streamChat(b, OpenAIRequest{Model: "m", Messages: []OpenAIMessage{{Role: "user", Content: "hi"}}}, func(string) error { return nil }, &usage)
 	if err != nil {
 		t.Fatalf("streamChat: %v", err)
 	}

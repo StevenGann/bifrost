@@ -7,12 +7,13 @@ import (
 )
 
 // handleOpenAIModels serves the OpenAI-compatible model list from the
-// configured aliases.
+// configured routes.
 func handleOpenAIModels(w http.ResponseWriter, cfg Config) {
-	data := make([]map[string]string, 0, len(cfg.Models))
-	for _, m := range cfg.Models {
+	names := cfg.modelNames()
+	data := make([]map[string]string, 0, len(names))
+	for _, name := range names {
 		data = append(data, map[string]string{
-			"id":       m.Name,
+			"id":       name,
 			"object":   "model",
 			"created":  "0",
 			"owned_by": "bifrost",
@@ -22,8 +23,9 @@ func handleOpenAIModels(w http.ResponseWriter, cfg Config) {
 }
 
 // handleOpenAIChat is a pass-through: it decodes the body as a generic JSON
-// object (so client-specific fields survive), remaps the model alias, and
-// forwards to the upstream verbatim — preserving streaming SSE or JSON.
+// object (so client-specific fields survive), remaps the model to its routed
+// backend + upstream name, and forwards to the backend verbatim — preserving
+// streaming SSE or JSON.
 func handleOpenAIChat(w http.ResponseWriter, r *http.Request, cfg Config) {
 	app := appFrom(r)
 	start := time.Now()
@@ -33,7 +35,7 @@ func handleOpenAIChat(w http.ResponseWriter, r *http.Request, cfg Config) {
 		return
 	}
 	clientModel, _ := body["model"].(string)
-	upstreamModel := cfg.upstreamModel(clientModel)
+	backend, upstreamModel := cfg.route(clientModel)
 	if _, ok := body["model"].(string); ok {
 		body["model"] = upstreamModel
 	}
@@ -44,7 +46,7 @@ func handleOpenAIChat(w http.ResponseWriter, r *http.Request, cfg Config) {
 	}
 
 	var usage Usage
-	status, err := forwardRaw(cfg, "/chat/completions", b, w, &usage)
+	status, err := forwardRaw(backend, "/chat/completions", b, w, &usage)
 	if err != nil && status == 0 {
 		status = 502
 		writeJSON(w, 502, map[string]string{"error": err.Error()})

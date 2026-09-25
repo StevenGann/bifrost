@@ -5,21 +5,29 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 )
 
-// ModelAlias maps a client-facing model name to the upstream model name.
-// e.g. Name="coach", Upstream="deepseek-v4-flash"
-type ModelAlias struct {
+// Backend is an upstream LLM endpoint Bifrost can route to.
+type Backend struct {
+	Name    string
+	BaseURL string
+	APIKey  string
+}
+
+// Route maps a client-facing model name to a backend + upstream model name.
+type Route struct {
 	Name     string
+	Backend  string
 	Upstream string
 }
 
 type Config struct {
-	Port         string
-	UpstreamBase string
-	UpstreamKey  string
-	Models       []ModelAlias
+	Port     string
+	Backends map[string]Backend
+	Default  string
+	Routes   map[string]Route
 }
 
 // metrics is the package-level collector. It is initialized to a working
@@ -34,53 +42,132 @@ func envOr(key, def string) string {
 	return def
 }
 
-// parseModels parses "a,b=upstream,c" into aliases.
-func parseModels(s string) []ModelAlias {
-	var out []ModelAlias
+// normalizeBase trims trailing slashes and a trailing /v1 suffix.
+func normalizeBase(base string) string {
+	base = strings.TrimRight(strings.TrimSpace(base), "/")
+	base = strings.TrimSuffix(base, "/v1")
+	return base
+}
+
+// backendConfig is the JSON shape of the BACKENDS env.
+type backendConfig struct {
+	Name      string `json:"name"`
+	BaseURL   string `json:"base_url"`
+	APIKeyEnv string `json:"api_key_env"`
+}
+
+// splitRoute splits a route target "backend/model" into its parts.
+func splitRoute(target string) (backend, model string) {
+	if i := strings.Index(target, "/"); i >= 0 {
+		return strings.TrimSpace(target[:i]), strings.TrimSpace(target[i+1:])
+	}
+	return "", strings.TrimSpace(target)
+}
+
+// parseModels parses the legacy MODELS env "a,b=upstream,c" into routes bound to
+// the given backend.
+func parseModels(s, backend string) []Route {
+	var out []Route
 	for _, part := range strings.Split(s, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
+		name, up := part, part
 		if i := strings.Index(part, "="); i >= 0 {
-			out = append(out, ModelAlias{
-				Name:     strings.TrimSpace(part[:i]),
-				Upstream: strings.TrimSpace(part[i+1:]),
-			})
-		} else {
-			out = append(out, ModelAlias{Name: part, Upstream: part})
+			name = strings.TrimSpace(part[:i])
+			up = strings.TrimSpace(part[i+1:])
 		}
+		out = append(out, Route{Name: name, Backend: backend, Upstream: up})
 	}
 	return out
 }
 
 func loadConfig() Config {
-	base := strings.TrimRight(strings.TrimSpace(os.Getenv("UPSTREAM_BASE_URL")), "/")
-	base = strings.TrimSuffix(base, "/v1") // normalize OpenAI-style base URLs
-	if base == "" {
-		base = "https://api.deepseek.com"
+	cfg := Config{
+		Port:     envOr("PORT", "11434"),
+		Backends: map[string]Backend{},
+		Routes:   map[string]Route{},
 	}
-	models := parseModels(os.Getenv("MODELS"))
-	if len(models) == 0 {
-		models = []ModelAlias{{Name: "deepseek-v4-flash", Upstream: "deepseek-v4-flash"}}
-	}
-	return Config{
-		Port:         envOr("PORT", "11434"),
-		UpstreamBase: base,
-		UpstreamKey:  os.Getenv("UPSTREAM_API_KEY"),
-		Models:       models,
-	}
-}
 
-// upstreamModel maps a requested name to the upstream name, passing unknown
-// names through unchanged so a single-model backend still works.
-func (c Config) upstreamModel(name string) string {
-	for _, m := range c.Models {
-		if m.Name == name {
-			return m.Upstream
+	// Multi-backend config: BACKENDS=[...] + ROUTES={"client":"backend/model"}.
+	if raw := os.Getenv("BACKENDS"); raw != "" {
+		var bcs []backendConfig
+		if err := json.Unmarshal([]byte(raw), &bcs); err != nil {
+			log.Printf("WARNING: ignoring malformed BACKENDS: %v", err)
+		}
+		for i, bc := range bcs {
+			if bc.Name == "" || bc.BaseURL == "" {
+				continue
+			}
+			cfg.Backends[bc.Name] = Backend{Name: bc.Name, BaseURL: normalizeBase(bc.BaseURL), APIKey: os.Getenv(bc.APIKeyEnv)}
+			if i == 0 {
+				cfg.Default = bc.Name
+			}
+		}
+		if raw := os.Getenv("ROUTES"); raw != "" {
+			var m map[string]string
+			if err := json.Unmarshal([]byte(raw), &m); err != nil {
+				log.Printf("WARNING: ignoring malformed ROUTES: %v", err)
+			}
+			for name, target := range m {
+				backend, up := splitRoute(target)
+				if backend == "" {
+					backend = cfg.Default
+				}
+				cfg.Routes[name] = Route{Name: name, Backend: backend, Upstream: up}
+			}
 		}
 	}
-	return name
+
+	// Legacy single-upstream fallback (backward compatible).
+	if len(cfg.Backends) == 0 {
+		base := normalizeBase(os.Getenv("UPSTREAM_BASE_URL"))
+		if base == "" {
+			base = "https://api.deepseek.com"
+		}
+		cfg.Backends["default"] = Backend{Name: "default", BaseURL: base, APIKey: os.Getenv("UPSTREAM_API_KEY")}
+		cfg.Default = "default"
+		for _, r := range parseModels(os.Getenv("MODELS"), "default") {
+			cfg.Routes[r.Name] = r
+		}
+		if len(cfg.Routes) == 0 {
+			cfg.Routes["deepseek-v4-flash"] = Route{Name: "deepseek-v4-flash", Backend: "default", Upstream: "deepseek-v4-flash"}
+		}
+	}
+
+	return cfg
+}
+
+// route resolves a requested model name to its backend + upstream model name.
+// Unknown names fall back to the default backend, passed through unchanged.
+func (c Config) route(name string) (Backend, string) {
+	if r, ok := c.Routes[name]; ok {
+		if b, ok := c.Backends[r.Backend]; ok {
+			return b, r.Upstream
+		}
+	}
+	return c.defaultBackend(), name
+}
+
+func (c Config) defaultBackend() Backend {
+	if b, ok := c.Backends[c.Default]; ok {
+		return b
+	}
+	for _, b := range c.Backends {
+		return b
+	}
+	return Backend{}
+}
+
+// modelNames returns the client-facing model names, sorted.
+func (c Config) modelNames() []string {
+	names := make([]string, 0, len(c.Routes))
+	for n := range c.Routes {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -117,9 +204,6 @@ func loadPricing() map[string]pricing {
 
 func main() {
 	cfg := loadConfig()
-	if cfg.UpstreamKey == "" {
-		log.Println("WARNING: UPSTREAM_API_KEY is empty — upstream calls will be unauthenticated")
-	}
 	metrics = newMetrics(loadPricing())
 
 	mux := http.NewServeMux()
@@ -147,7 +231,7 @@ func main() {
 	mux.Handle("GET /metrics", metrics.Handler())
 
 	addr := ":" + cfg.Port
-	log.Printf("bifrost listening on %s  upstream=%s  models=%d", addr, cfg.UpstreamBase, len(cfg.Models))
+	log.Printf("bifrost listening on %s  backends=%d  routes=%d", addr, len(cfg.Backends), len(cfg.Routes))
 	log.Fatal(http.ListenAndServe(addr, mux))
 }
 

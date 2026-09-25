@@ -32,21 +32,35 @@ Then point any Ollama client at `http://<host>:11434`.
 
 ## Configuration
 
-| Env | Default | Description |
-|-----|---------|-------------|
-| `PORT` | `11434` | Listen port |
-| `UPSTREAM_BASE_URL` | `https://api.deepseek.com` | OpenAI-compatible backend base URL |
-| `UPSTREAM_API_KEY` | *(none)* | Bearer key for the upstream |
-| `MODELS` | `deepseek-v4-flash` | Comma-separated model list; `alias=upstream` to rename |
-| `PRICING` | *(built-in DeepSeek rates)* | JSON `{"model":{"input":x,"output":y}}` in USD per 1M tokens, merged over the DeepSeek defaults |
+Bifrost routes client-facing model names to one or more upstream backends.
 
-Example with aliases:
+### Multi-backend (recommended)
+
+| Env | Description |
+|-----|-------------|
+| `BACKENDS` | JSON array of backends: `[{"name":"deepseek","base_url":"https://api.deepseek.com","api_key_env":"UPSTREAM_API_KEY"}]` |
+| `ROUTES` | JSON object mapping client model → `backend/upstream-model` |
+| `PORT` | Listen port (default `11434`) |
+| `PRICING` | JSON `{"model":{"input":x,"output":y}}` USD/1M tokens, merged over DeepSeek defaults |
 
 ```bash
-MODELS="deepseek-v4-flash,deepseek-v4-pro,coach=deepseek-v4-flash"
+BACKENDS='[{"name":"deepseek","base_url":"https://api.deepseek.com","api_key_env":"UPSTREAM_API_KEY"}]'
+ROUTES='{"coach":"deepseek/deepseek-v4-flash","deepseek-v4-flash":"deepseek/deepseek-v4-flash","deepseek-v4-pro":"deepseek/deepseek-v4-pro"}'
 ```
 
-Clients then see three models; `coach` routes to `deepseek-v4-flash` upstream.
+`api_key_env` names an env var holding the backend's bearer key (keeps secrets
+out of the config). The **first** backend in `BACKENDS` is the default — unknown
+model names route to it unchanged.
+
+### Single upstream (legacy)
+
+If `BACKENDS` is unset, Bifrost falls back to the original single-upstream config:
+
+| Env | Description |
+|-----|-------------|
+| `UPSTREAM_BASE_URL` | Backend base URL (default `https://api.deepseek.com`) |
+| `UPSTREAM_API_KEY` | Bearer key |
+| `MODELS` | Comma-separated `alias=upstream` list |
 
 ## Metrics
 

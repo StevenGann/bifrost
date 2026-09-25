@@ -85,14 +85,14 @@ type OpenAIChatResponse struct {
 	Usage OpenAIUsage `json:"usage"`
 }
 
-func upstreamReq(cfg Config, method, path string, body []byte) (*http.Request, error) {
-	req, err := http.NewRequest(method, cfg.UpstreamBase+path, bytes.NewReader(body))
+func upstreamReq(b Backend, method, path string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequest(method, b.BaseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if cfg.UpstreamKey != "" {
-		req.Header.Set("Authorization", "Bearer "+cfg.UpstreamKey)
+	if b.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+b.APIKey)
 	}
 	return req, nil
 }
@@ -100,14 +100,14 @@ func upstreamReq(cfg Config, method, path string, body []byte) (*http.Request, e
 // streamChat POSTs a streaming chat completion and calls onChunk for each
 // content delta. It injects stream_options.include_usage so the final chunk
 // carries token usage, which is written to *usage.
-func streamChat(cfg Config, oreq OpenAIRequest, onChunk func(content string) error, usage *Usage) error {
+func streamChat(b Backend, oreq OpenAIRequest, onChunk func(content string) error, usage *Usage) error {
 	oreq.Stream = true
 	oreq.StreamOptions = &StreamOptions{IncludeUsage: true}
 	body, err := json.Marshal(oreq)
 	if err != nil {
 		return err
 	}
-	req, err := upstreamReq(cfg, "POST", "/chat/completions", body)
+	req, err := upstreamReq(b, "POST", "/chat/completions", body)
 	if err != nil {
 		return err
 	}
@@ -154,13 +154,13 @@ func streamChat(cfg Config, oreq OpenAIRequest, onChunk func(content string) err
 
 // chat performs a non-streaming chat completion and returns the parsed body
 // plus token usage.
-func chat(cfg Config, oreq OpenAIRequest) (*OpenAIChatResponse, Usage, error) {
+func chat(b Backend, oreq OpenAIRequest) (*OpenAIChatResponse, Usage, error) {
 	oreq.Stream = false
 	body, err := json.Marshal(oreq)
 	if err != nil {
 		return nil, Usage{}, err
 	}
-	req, err := upstreamReq(cfg, "POST", "/chat/completions", body)
+	req, err := upstreamReq(b, "POST", "/chat/completions", body)
 	if err != nil {
 		return nil, Usage{}, err
 	}
@@ -185,7 +185,7 @@ func chat(cfg Config, oreq OpenAIRequest) (*OpenAIChatResponse, Usage, error) {
 // requests get stream_options.include_usage injected so the final chunk carries
 // usage. It returns the HTTP status written (0 if nothing was written because
 // the dial/request failed before any headers went out).
-func forwardRaw(cfg Config, path string, body []byte, w http.ResponseWriter, usage *Usage) (int, error) {
+func forwardRaw(b Backend, path string, body []byte, w http.ResponseWriter, usage *Usage) (int, error) {
 	var probe struct {
 		Stream bool `json:"stream"`
 	}
@@ -200,7 +200,7 @@ func forwardRaw(cfg Config, path string, body []byte, w http.ResponseWriter, usa
 		}
 	}
 
-	req, err := upstreamReq(cfg, "POST", path, body)
+	req, err := upstreamReq(b, "POST", path, body)
 	if err != nil {
 		return 0, err
 	}

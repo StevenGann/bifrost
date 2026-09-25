@@ -79,9 +79,10 @@ type ollamaGenerateResponse struct {
 // ---- handlers ----
 
 func handleTags(w http.ResponseWriter, cfg Config) {
-	models := make([]ollamaModel, 0, len(cfg.Models))
-	for _, m := range cfg.Models {
-		om := ollamaModel{Name: m.Name, Model: m.Name, ModifiedAt: nowRFC3339(), Size: 0, Digest: "sha256:bifrost-proxy"}
+	names := cfg.modelNames()
+	models := make([]ollamaModel, 0, len(names))
+	for _, name := range names {
+		om := ollamaModel{Name: name, Model: name, ModifiedAt: nowRFC3339(), Size: 0, Digest: "sha256:bifrost-proxy"}
 		om.Details.Format = "gguf"
 		om.Details.Family = "bifrost"
 		models = append(models, om)
@@ -90,10 +91,11 @@ func handleTags(w http.ResponseWriter, cfg Config) {
 }
 
 // toOpenAIRequest translates an Ollama-native chat request into an
-// OpenAI-compatible request, applying the model alias and option defaults.
-func toOpenAIRequest(cfg Config, model string, messages []OpenAIMessage, format string, temperature, topP *float64, numPredict int) OpenAIRequest {
+// OpenAI-compatible request, applying option defaults. The model name is the
+// already-resolved upstream name.
+func toOpenAIRequest(upstreamModel string, messages []OpenAIMessage, format string, temperature, topP *float64, numPredict int) OpenAIRequest {
 	oreq := OpenAIRequest{
-		Model:       cfg.upstreamModel(model),
+		Model:       upstreamModel,
 		Messages:    messages,
 		Temperature: 0.7,
 		TopP:        0.9,
@@ -122,8 +124,8 @@ func handleChat(w http.ResponseWriter, r *http.Request, cfg Config) {
 		return
 	}
 	clientModel := req.Model
-	upstreamModel := cfg.upstreamModel(req.Model)
-	oreq := toOpenAIRequest(cfg, req.Model, req.Messages, req.Format, req.Options.Temperature, req.Options.TopP, req.Options.NumPredict)
+	backend, upstreamModel := cfg.route(req.Model)
+	oreq := toOpenAIRequest(upstreamModel, req.Messages, req.Format, req.Options.Temperature, req.Options.TopP, req.Options.NumPredict)
 	var usage Usage
 
 	if req.Stream {
@@ -134,7 +136,7 @@ func handleChat(w http.ResponseWriter, r *http.Request, cfg Config) {
 			return
 		}
 		enc := json.NewEncoder(w)
-		err := streamChat(cfg, oreq, func(content string) error {
+		err := streamChat(backend, oreq, func(content string) error {
 			if err := enc.Encode(ollamaStreamChunk{
 				Model:     req.Model,
 				CreatedAt: nowRFC3339(),
@@ -155,7 +157,7 @@ func handleChat(w http.ResponseWriter, r *http.Request, cfg Config) {
 		return
 	}
 
-	resp, u, err := chat(cfg, oreq)
+	resp, u, err := chat(backend, oreq)
 	usage = u
 	if err != nil {
 		metrics.Record(clientModel, upstreamModel, app, "/api/chat", 502, usage.PromptTokens, usage.CompletionTokens, time.Since(start), true)
@@ -179,7 +181,7 @@ func handleGenerate(w http.ResponseWriter, r *http.Request, cfg Config) {
 		return
 	}
 	clientModel := req.Model
-	upstreamModel := cfg.upstreamModel(req.Model)
+	backend, upstreamModel := cfg.route(req.Model)
 
 	messages := make([]OpenAIMessage, 0, 2)
 	if req.System != "" {
@@ -187,7 +189,7 @@ func handleGenerate(w http.ResponseWriter, r *http.Request, cfg Config) {
 	}
 	messages = append(messages, OpenAIMessage{Role: "user", Content: req.Prompt})
 
-	oreq := toOpenAIRequest(cfg, req.Model, messages, req.Format, req.Options.Temperature, req.Options.TopP, req.Options.NumPredict)
+	oreq := toOpenAIRequest(upstreamModel, messages, req.Format, req.Options.Temperature, req.Options.TopP, req.Options.NumPredict)
 	var usage Usage
 
 	if req.Stream {
@@ -198,7 +200,7 @@ func handleGenerate(w http.ResponseWriter, r *http.Request, cfg Config) {
 			return
 		}
 		enc := json.NewEncoder(w)
-		err := streamChat(cfg, oreq, func(content string) error {
+		err := streamChat(backend, oreq, func(content string) error {
 			if err := enc.Encode(ollamaGenerateResponse{Model: req.Model, CreatedAt: nowRFC3339(), Response: content, Done: false}); err != nil {
 				return err
 			}
@@ -214,7 +216,7 @@ func handleGenerate(w http.ResponseWriter, r *http.Request, cfg Config) {
 		return
 	}
 
-	resp, u, err := chat(cfg, oreq)
+	resp, u, err := chat(backend, oreq)
 	usage = u
 	if err != nil {
 		metrics.Record(clientModel, upstreamModel, app, "/api/generate", 502, usage.PromptTokens, usage.CompletionTokens, time.Since(start), true)
