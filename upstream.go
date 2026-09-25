@@ -154,7 +154,8 @@ func streamChat(b Backend, oreq OpenAIRequest, onChunk func(content string) erro
 }
 
 // chat performs a non-streaming chat completion and returns the parsed body
-// plus token usage.
+// plus token usage. Errors are *upstreamError so callers can tell transient
+// failures from permanent ones.
 func chat(b Backend, oreq OpenAIRequest) (*OpenAIChatResponse, Usage, error) {
 	oreq.Stream = false
 	body, err := json.Marshal(oreq)
@@ -167,16 +168,16 @@ func chat(b Backend, oreq OpenAIRequest) (*OpenAIChatResponse, Usage, error) {
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, Usage{}, err
+		return nil, Usage{}, &upstreamError{0, err.Error()}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
-		return nil, Usage{}, fmt.Errorf("upstream %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+		return nil, Usage{}, &upstreamError{resp.StatusCode, fmt.Sprintf("upstream %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))}
 	}
 	var out OpenAIChatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, Usage{}, err
+		return nil, Usage{}, &upstreamError{200, err.Error()}
 	}
 	return &out, out.Usage.toUsage(), nil
 }

@@ -43,6 +43,8 @@ Bifrost routes client-facing model names to one or more upstream backends.
 | `BACKENDS` | JSON array of backends: `[{"name":"deepseek","base_url":"https://api.deepseek.com","api_key_env":"UPSTREAM_API_KEY"}]` |
 | `ROUTES` | JSON object mapping client model → `backend/upstream-model` |
 | `PORT` | Listen port (default `11434`) |
+| `RETRIES` | Retries for transient failures — network, `429`, `5xx` (default `2`) |
+| `FALLBACKS` | JSON `{"model":"fallback-model"}` — fall back when the primary fails |
 | `PRICING` | JSON `{"model":{"input":x,"output":y}}` USD/1M tokens, merged over DeepSeek defaults |
 
 ```bash
@@ -94,6 +96,13 @@ Cost is priced at DeepSeek's official cache-miss rates, doubled during peak hour
   cloud. Point `private:*` at a local backend in `ROUTES` and it just works.
 - **Local auto-detection.** Loopback, RFC1918, and `.lab`/`.local`/etc. backends
   are treated as local (never redacted); override with `"local": true`/`false`.
+
+## Resilience
+
+Non-streaming completions retry transient failures (network, `429`, `5xx`) with
+exponential backoff (`RETRIES`) and fall back through a model chain (`FALLBACKS`)
+when the primary fails for good. Streaming and `/v1` passthrough stay
+single-attempt — retrying a half-flushed stream would corrupt the client.
 
 ## API surface
 

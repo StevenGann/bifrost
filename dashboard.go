@@ -17,6 +17,8 @@ type dashboardRow struct {
 	CostUSD   float64
 	AvgLatMs  float64
 	Errors    uint64
+	Retries   uint64
+	Fallbacks uint64
 }
 
 type dashboardData struct {
@@ -70,6 +72,8 @@ func (m *Metrics) dashboardData() dashboardData {
 			CostUSD:   m.costUSD[k],
 			Errors:    errs,
 			AvgLatMs:  avgMs,
+			Retries:   m.retries[k],
+			Fallbacks: m.fallbacks[k],
 		})
 		d.TotalRequests += reqs
 		d.TotalTokensIn += m.tokensIn[k]
@@ -134,11 +138,12 @@ a{color:#7fd4ff}
 
 <h2>By model / app</h2>
 <table>
-<tr><th>model</th><th>app</th><th>requests</th><th>tokens in</th><th>tokens out</th><th>cost</th><th>avg latency</th><th>errors</th></tr>
+<tr><th>model</th><th>app</th><th>requests</th><th>tokens in</th><th>tokens out</th><th>cost</th><th>avg latency</th><th>errors</th><th>retries</th><th>fallbacks</th></tr>
 {{range .Rows}}<tr>
 <td class="mono">{{.Model}}</td><td>{{.App}}</td><td>{{.Requests}}</td><td>{{.TokensIn}}</td><td>{{.TokensOut}}</td>
 <td class="mono">${{printf "%.6f" .CostUSD}}</td><td class="mono">{{printf "%.0f" .AvgLatMs}} ms</td>
 <td class="{{if .Errors}}err{{end}}">{{.Errors}}</td>
+<td>{{.Retries}}</td><td>{{.Fallbacks}}</td>
 </tr>{{end}}
 </table>
 

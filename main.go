@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -28,10 +29,12 @@ type Route struct {
 }
 
 type Config struct {
-	Port     string
-	Backends map[string]Backend
-	Default  string
-	Routes   map[string]Route
+	Port      string
+	Backends  map[string]Backend
+	Default   string
+	Routes    map[string]Route
+	Retries   int
+	Fallbacks map[string]string
 }
 
 // metrics is the package-level collector. It is initialized to a working
@@ -42,6 +45,15 @@ var metrics = newMetrics(defaultPricing())
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return def
+}
+
+func envInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return def
 }
@@ -121,9 +133,11 @@ func parseModels(s, backend string) []Route {
 
 func loadConfig() Config {
 	cfg := Config{
-		Port:     envOr("PORT", "11434"),
-		Backends: map[string]Backend{},
-		Routes:   map[string]Route{},
+		Port:      envOr("PORT", "11434"),
+		Backends:  map[string]Backend{},
+		Routes:    map[string]Route{},
+		Retries:   envInt("RETRIES", 2),
+		Fallbacks: map[string]string{},
 	}
 
 	// Multi-backend config: BACKENDS=[...] + ROUTES={"client":"backend/model"}.
@@ -169,6 +183,12 @@ func loadConfig() Config {
 		}
 		if len(cfg.Routes) == 0 {
 			cfg.Routes["deepseek-v4-flash"] = Route{Name: "deepseek-v4-flash", Backend: "default", Upstream: "deepseek-v4-flash"}
+		}
+	}
+
+	if raw := os.Getenv("FALLBACKS"); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &cfg.Fallbacks); err != nil {
+			log.Printf("WARNING: ignoring malformed FALLBACKS: %v", err)
 		}
 	}
 

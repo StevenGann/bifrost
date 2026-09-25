@@ -84,6 +84,8 @@ type Metrics struct {
 	tokensOut map[string]uint64     // "model|app"
 	costUSD   map[string]float64    // "model|app"
 	latency   map[string]*histogram // "model|app"
+	retries   map[string]uint64     // "model|app"
+	fallbacks map[string]uint64     // "model|app"
 	recent    []requestRecord       // ring buffer (newest last)
 }
 
@@ -97,6 +99,8 @@ func newMetrics(p map[string]pricing) *Metrics {
 		tokensOut: map[string]uint64{},
 		costUSD:   map[string]float64{},
 		latency:   map[string]*histogram{},
+		retries:   map[string]uint64{},
+		fallbacks: map[string]uint64{},
 	}
 }
 
@@ -141,6 +145,20 @@ func (m *Metrics) Record(clientModel, upstreamModel, app, endpoint string, statu
 
 func (m *Metrics) cost(upstreamModel string, tokIn, tokOut int) float64 {
 	return m.costAt(upstreamModel, tokIn, tokOut, time.Now())
+}
+
+// RecordRetries adds to the retry counter for a model+app pair.
+func (m *Metrics) RecordRetries(model, app string, n int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.retries[model+"|"+app] += uint64(n)
+}
+
+// RecordFallbacks adds to the fallback counter for a model+app pair.
+func (m *Metrics) RecordFallbacks(model, app string, n int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.fallbacks[model+"|"+app] += uint64(n)
 }
 
 func (m *Metrics) costAt(upstreamModel string, tokIn, tokOut int, at time.Time) float64 {
@@ -211,6 +229,20 @@ func (m *Metrics) writeLocked(w io.Writer) {
 	for _, k := range errKeys {
 		p := strings.Split(k, "|")
 		fmt.Fprintf(w, "bifrost_errors_total{model=%q,app=%q,endpoint=%q} %d\n", p[0], p[1], p[2], m.errors[k])
+	}
+
+	fmt.Fprintf(w, "# HELP bifrost_retries_total Upstream retries performed.\n")
+	fmt.Fprintf(w, "# TYPE bifrost_retries_total counter\n")
+	for _, k := range sortedKeys(m.retries) {
+		p := strings.SplitN(k, "|", 2)
+		fmt.Fprintf(w, "bifrost_retries_total{model=%q,app=%q} %d\n", p[0], p[1], m.retries[k])
+	}
+
+	fmt.Fprintf(w, "# HELP bifrost_fallbacks_total Fallbacks performed after primary failure.\n")
+	fmt.Fprintf(w, "# TYPE bifrost_fallbacks_total counter\n")
+	for _, k := range sortedKeys(m.fallbacks) {
+		p := strings.SplitN(k, "|", 2)
+		fmt.Fprintf(w, "bifrost_fallbacks_total{model=%q,app=%q} %d\n", p[0], p[1], m.fallbacks[k])
 	}
 
 	fmt.Fprintf(w, "# HELP bifrost_request_duration_seconds Completion request latency.\n")

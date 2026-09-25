@@ -67,11 +67,14 @@ Exact + semantic prompt caching. Agents re-send a lot of near-identical context
 every turn; caching that saves tokens and latency. Semantic caching builds on #3
 (needs embeddings) and could cut 20–40% off agent-traffic cost.
 
-### 6. Resilience: fallback + retry + JSON enforcement ⬜
+### 6. Resilience: retry + fallback — ✅ shipped (v0.6)
 
-Circuit-breaker to a fallback model/provider when the primary hiccups or
-rate-limits; auto-retry; and "model returned invalid JSON → nudge it to fix it".
-Every consumer gets more robust for free.
+Non-streaming completions retry transient failures (network, `429`, `5xx`) with
+exponential backoff (`RETRIES`, default 2) and fall back through a model chain
+(`FALLBACKS`, e.g. `{"deepseek-v4-pro":"deepseek-v4-flash"}`) when the primary
+fails for good. `bifrost_retries_total` + `bifrost_fallbacks_total` counters.
+Streaming and `/v1` passthrough stay single-attempt (retrying a half-flushed
+stream would corrupt the client). JSON-output repair remains a future increment.
 
 ### 7. Model catalog with metadata ⬜
 
