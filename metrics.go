@@ -54,11 +54,29 @@ func (h *histogram) observe(seconds float64) {
 	h.count++
 }
 
+const recentCap = 100
+
+// requestRecord is one completed completion request, kept in a ring buffer for
+// the live dashboard.
+type requestRecord struct {
+	Time       time.Time
+	Model      string
+	App        string
+	Endpoint   string
+	Status     int
+	TokensIn   int
+	TokensOut  int
+	CostUSD    float64
+	DurationMs float64
+	Err        bool
+}
+
 // Metrics collects per-request counters for completion traffic and renders them
 // in Prometheus text format. Concurrency-safe.
 type Metrics struct {
 	mu      sync.Mutex
 	pricing map[string]pricing
+	start   time.Time
 
 	requests  map[string]uint64     // "model|app|endpoint|status"
 	errors    map[string]uint64     // "model|app|endpoint"
@@ -66,11 +84,13 @@ type Metrics struct {
 	tokensOut map[string]uint64     // "model|app"
 	costUSD   map[string]float64    // "model|app"
 	latency   map[string]*histogram // "model|app"
+	recent    []requestRecord       // ring buffer (newest last)
 }
 
 func newMetrics(p map[string]pricing) *Metrics {
 	return &Metrics{
 		pricing:   p,
+		start:     time.Now(),
 		requests:  map[string]uint64{},
 		errors:    map[string]uint64{},
 		tokensIn:  map[string]uint64{},
@@ -89,7 +109,8 @@ func (m *Metrics) Record(clientModel, upstreamModel, app, endpoint string, statu
 	m.requests[ma+"|"+endpoint+"|"+strconv.Itoa(status)]++
 	m.tokensIn[ma] += uint64(tokIn)
 	m.tokensOut[ma] += uint64(tokOut)
-	m.costUSD[ma] += m.cost(upstreamModel, tokIn, tokOut)
+	c := m.cost(upstreamModel, tokIn, tokOut)
+	m.costUSD[ma] += c
 	if isErr {
 		m.errors[ma+"|"+endpoint]++
 	}
@@ -99,6 +120,23 @@ func (m *Metrics) Record(clientModel, upstreamModel, app, endpoint string, statu
 		m.latency[ma] = h
 	}
 	h.observe(dur.Seconds())
+
+	if len(m.recent) >= recentCap {
+		copy(m.recent, m.recent[1:])
+		m.recent = m.recent[:recentCap-1]
+	}
+	m.recent = append(m.recent, requestRecord{
+		Time:       time.Now().UTC(),
+		Model:      clientModel,
+		App:        app,
+		Endpoint:   endpoint,
+		Status:     status,
+		TokensIn:   tokIn,
+		TokensOut:  tokOut,
+		CostUSD:    c,
+		DurationMs: dur.Seconds() * 1000,
+		Err:        isErr,
+	})
 }
 
 func (m *Metrics) cost(upstreamModel string, tokIn, tokOut int) float64 {

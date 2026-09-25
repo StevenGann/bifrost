@@ -139,6 +139,8 @@ func main() {
 	mux.HandleFunc("POST /v1/chat/completions", func(w http.ResponseWriter, r *http.Request) { handleOpenAIChat(w, r, cfg) })
 
 	// Ops
+	mux.Handle("GET /{$}", metrics.Dashboard())
+	mux.Handle("GET /dashboard", metrics.Dashboard())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]string{"status": "ok"})
 	})
