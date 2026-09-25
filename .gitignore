@@ -1,0 +1,11 @@
+# Binaries
+/bifrost
+/bin/
+*.exe
+
+# Env / secrets
+.env
+.env.*
+
+# Local build artifacts
+*.test
