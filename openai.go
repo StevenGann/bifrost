@@ -51,7 +51,7 @@ func handleOpenAIChat(w http.ResponseWriter, r *http.Request, cfg Config) {
 	}
 
 	var usage Usage
-	status, err := forwardRaw(backend, "/chat/completions", b, w, &usage)
+	status, err := forwardRaw(backend, "/v1/chat/completions", b, w, &usage)
 	if err != nil && status == 0 {
 		status = 502
 		writeJSON(w, 502, map[string]string{"error": err.Error()})

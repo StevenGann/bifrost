@@ -106,7 +106,7 @@ func TestToOpenAIRequest(t *testing.T) {
 
 func TestChatNonStream(t *testing.T) {
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/chat/completions" {
+		if r.URL.Path != "/v1/chat/completions" {
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer testkey" {

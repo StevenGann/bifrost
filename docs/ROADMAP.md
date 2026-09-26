@@ -31,6 +31,9 @@ below turns it into a bridge with a real decision layer.
 - **Caching (v0.8):** exact-match response caching — identical requests (retries,
   idempotent re-sends) skip the upstream call entirely (zero cost, zero latency).
   Bounded LRU + TTL, in-memory only; hit-rate surfaced on the dashboard.
+- **Embeddings (v0.9):** Ollama-native + OpenAI-compatible embeddings endpoints,
+  routed to any backend holding an embedding model (e.g. Epsilon's
+  `nomic-embed-text`). Upstream calls standardized on `/v1/*` paths.
 - Single static binary, stdlib-only, deployed on Hyperion at `bifrost.lab:11434`;
   the only state is an optional spend ledger file.
 
@@ -54,12 +57,15 @@ services to visualize one endpoint was the tail wagging the dog. `/metrics` stay
 as the Prometheus hook: if cross-service history/alerting is ever wanted,
 Prometheus can scrape Bifrost with zero rework on Bifrost's side.
 
-### 3. Embeddings endpoint ⬜
+### 3. Embeddings endpoint — ✅ shipped (v0.9)
 
-DeepSeek has no embeddings API; several apps need one (Subwave currently pays
-Gemini for embeddings, semantic search over the Caldera vault, future RAG). Serve
-`/v1/embeddings` + `/api/embeddings` backed by a local model, collapsing all of
-that into one endpoint and dropping a provider.
+`/api/embeddings` + `/api/embed` (Ollama-native) and `/v1/embeddings`
+(OpenAI-compatible), routed to whichever backend holds an embedding model (a
+`ROUTES` entry like `embed → epsilon/nomic-embed-text`). Bifrost translates
+Ollama↔OpenAI embedding shapes. Also standardized all upstream calls on the real
+OpenAI paths (`/v1/chat/completions`, `/v1/embeddings`) so Ollama, vLLM, and
+DeepSeek are all first-class backends instead of DeepSeek's `/chat/completions`
+shorthand.
 
 ### 4. Privacy routing + PII redaction — ✅ shipped (v0.5)
 

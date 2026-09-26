@@ -108,7 +108,7 @@ func streamChat(b Backend, oreq OpenAIRequest, onChunk func(content string) erro
 	if err != nil {
 		return err
 	}
-	req, err := upstreamReq(b, "POST", "/chat/completions", body)
+	req, err := upstreamReq(b, "POST", "/v1/chat/completions", body)
 	if err != nil {
 		return err
 	}
@@ -162,7 +162,7 @@ func chat(b Backend, oreq OpenAIRequest) (*OpenAIChatResponse, Usage, error) {
 	if err != nil {
 		return nil, Usage{}, err
 	}
-	req, err := upstreamReq(b, "POST", "/chat/completions", body)
+	req, err := upstreamReq(b, "POST", "/v1/chat/completions", body)
 	if err != nil {
 		return nil, Usage{}, err
 	}

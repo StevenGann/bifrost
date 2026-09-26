@@ -131,19 +131,25 @@ cost, zero latency. Bounded LRU with TTL (`CACHE_TTL`/`CACHE_MAX`). Never
 persisted (cached responses can echo request PII). `bifrost_cache_hits_total` /
 `bifrost_cache_misses_total` in `/metrics`, hit-rate on the dashboard.
 
+## Embeddings
+
+`/api/embeddings` (+ `/api/embed`) and `/v1/embeddings` route to whichever backend
+holds an embedding model — add a `ROUTES` entry (e.g.
+`embed → epsilon/nomic-embed-text`) pointing at a local model. Bifrost translates
+between the Ollama-native and OpenAI embedding shapes.
+
 ## API surface
 
 - `GET /api/tags` — model list (Ollama format)
 - `POST /api/chat` — chat, streaming or not (Ollama format)
 - `POST /api/generate` — completion (Ollama format)
+- `POST /api/embeddings` / `POST /api/embed` — embeddings (Ollama format)
 - `GET /api/version` — `0.1.0-bifrost`
 - `GET /v1/models` — model list (OpenAI format)
 - `POST /v1/chat/completions` — passthrough (OpenAI format)
+- `POST /v1/embeddings` — embeddings (OpenAI format)
 - `GET /healthz` — liveness
 - `GET /metrics` — Prometheus metrics
-
-Embeddings (`/api/embeddings`, `/api/embed`) return `501` — most OpenAI-compatible
-upstreams (including DeepSeek) don't expose them.
 
 ## License
 

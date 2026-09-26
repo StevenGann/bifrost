@@ -316,12 +316,13 @@ func main() {
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]string{"version": "0.1.0-bifrost"})
 	})
-	mux.HandleFunc("POST /api/embeddings", notSupported)
-	mux.HandleFunc("POST /api/embed", notSupported)
+	mux.HandleFunc("POST /api/embeddings", governor.Wrap(func(w http.ResponseWriter, r *http.Request) { handleEmbeddings(w, r, cfg) }))
+	mux.HandleFunc("POST /api/embed", governor.Wrap(func(w http.ResponseWriter, r *http.Request) { handleEmbeddings(w, r, cfg) }))
 
 	// OpenAI-compatible API (same as Ollama's /v1)
 	mux.HandleFunc("GET /v1/models", func(w http.ResponseWriter, r *http.Request) { handleOpenAIModels(w, cfg) })
 	mux.HandleFunc("POST /v1/chat/completions", governor.Wrap(func(w http.ResponseWriter, r *http.Request) { handleOpenAIChat(w, r, cfg) }))
+	mux.HandleFunc("POST /v1/embeddings", governor.Wrap(func(w http.ResponseWriter, r *http.Request) { handleOpenAIEmbeddings(w, r, cfg) }))
 
 	// Ops
 	mux.Handle("GET /{$}", metrics.Dashboard())
@@ -334,8 +335,4 @@ func main() {
 	addr := ":" + cfg.Port
 	log.Printf("bifrost listening on %s  backends=%d  routes=%d", addr, len(cfg.Backends), len(cfg.Routes))
 	log.Fatal(http.ListenAndServe(addr, mux))
-}
-
-func notSupported(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, 501, map[string]string{"error": "embeddings are not supported by the configured upstream"})
 }
