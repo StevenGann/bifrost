@@ -38,6 +38,12 @@ below turns it into a bridge with a real decision layer.
   consecutive failures, fail fast (503) instead of hanging on a downed backend;
   a half-open probe after `CIRCUIT_COOLDOWN` re-closes on recovery. Makes the
   nomadic local backend degrade gracefully while it's offline.
+- **Transparent failover (v0.11):** retry + failover now apply to every path —
+  streaming, `/v1` passthrough, and embeddings — not just non-streaming chat.
+  A unified `resolve` loop retries transient failures and walks `FALLBACKS`
+  before anything reaches the client; streaming retries up to the first flushed
+  byte. Local backends dial with a 3s timeout so a downed worker fails over in
+  seconds. The client sees one slow success, never an internal failure.
 - Single static binary, stdlib-only, deployed on Hyperion at `bifrost.lab:11434`;
   the only state is an optional spend ledger file.
 

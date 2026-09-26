@@ -109,16 +109,21 @@ Cost is priced at DeepSeek's official cache-miss rates, doubled during peak hour
 
 ## Resilience
 
-Non-streaming completions retry transient failures (network, `429`, `5xx`) with
-exponential backoff (`RETRIES`) and fall back through a model chain (`FALLBACKS`)
-when the primary fails for good. Streaming and `/v1` passthrough stay
-single-attempt — retrying a half-flushed stream would corrupt the client.
+Failures are absorbed transparently: the client sees one slow success, never an
+internal backend failure. Every path — chat (streaming or not), the `/v1`
+pass-through, and embeddings — retries transient failures (network, `429`,
+`5xx`) with exponential backoff (`RETRIES`) and fails over through a model chain
+(`FALLBACKS`). Streaming retries/fails over up to the first byte flushed; once a
+stream starts it's committed and can't be replayed, so mid-stream failures are
+the only thing a client can observe.
 
 Each backend also gets a circuit breaker: after `CIRCUIT_THRESHOLD` consecutive
-failures it opens, so requests fail fast (503) instead of hanging on a downed
-backend — essential for itinerant local workers (e.g. Epsilon) that come and go.
-After `CIRCUIT_COOLDOWN` it half-opens to admit a probe and re-close on success.
-Surfaced as `bifrost_circuit_trips_total` + `bifrost_circuit_open`.
+failures it opens, so requests fail fast (503) — or fail over instantly to a
+fallback — instead of hanging on a downed backend. This matters for itinerant
+local workers (e.g. Epsilon) that come and go. After `CIRCUIT_COOLDOWN` it
+half-opens to admit a probe and re-close on success. Local backends use a short
+3s dial timeout so a powered-off worker fails over in seconds, not 30s. Surfaced
+as `bifrost_circuit_trips_total` + `bifrost_circuit_open`.
 
 ## Governance
 

@@ -109,7 +109,7 @@ func TestStreamChatCapturesUsage(t *testing.T) {
 
 	b := Backend{Name: "default", BaseURL: mock.URL, APIKey: "k"}
 	var usage Usage
-	err := streamChat(b, OpenAIRequest{Model: "m", Messages: []OpenAIMessage{{Role: "user", Content: "hi"}}}, func(string) error { return nil }, &usage)
+	_, err := streamChat(b, OpenAIRequest{Model: "m", Messages: []OpenAIMessage{{Role: "user", Content: "hi"}}}, func(string) error { return nil }, &usage)
 	if err != nil {
 		t.Fatalf("streamChat: %v", err)
 	}

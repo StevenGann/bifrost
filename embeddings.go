@@ -67,24 +67,29 @@ func handleEmbeddings(w http.ResponseWriter, r *http.Request, cfg Config) {
 		writeJSON(w, 400, map[string]string{"error": "bad request"})
 		return
 	}
-	backend, upstream, rerr := cfg.route(req.Model)
-	if rerr != nil {
-		metrics.Record(req.Model, req.Model, app, "/api/embeddings", 400, 0, 0, time.Since(start), true)
-		writeJSON(w, 400, map[string]string{"error": rerr.Error()})
-		return
-	}
-	emb, err := embed(backend, upstream, req.Prompt)
-	if err != nil {
-		status := 502
-		if ue, ok := err.(*upstreamError); ok && ue.status >= 400 {
-			status = ue.status
+
+	var result []float64
+	err, lastUpstream, retries, fallbacks := cfg.resolve(req.Model, func(b Backend, up string) (error, bool) {
+		emb, e := embed(b, up, req.Prompt)
+		if e == nil {
+			result = emb
 		}
-		metrics.Record(req.Model, upstream, app, "/api/embeddings", status, 0, 0, time.Since(start), true)
+		return e, false
+	})
+	if retries > 0 {
+		metrics.RecordRetries(req.Model, app, retries)
+	}
+	if fallbacks > 0 {
+		metrics.RecordFallbacks(req.Model, app, fallbacks)
+	}
+	if err != nil {
+		status := errorStatus(statusOf(err))
+		metrics.Record(req.Model, lastUpstream, app, "/api/embeddings", status, 0, 0, time.Since(start), true)
 		writeJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
-	metrics.Record(req.Model, upstream, app, "/api/embeddings", 200, 0, 0, time.Since(start), false)
-	writeJSON(w, 200, ollamaEmbeddingsResponse{Embedding: emb})
+	metrics.Record(req.Model, lastUpstream, app, "/api/embeddings", 200, 0, 0, time.Since(start), false)
+	writeJSON(w, 200, ollamaEmbeddingsResponse{Embedding: result})
 }
 
 // handleOpenAIEmbeddings passes the OpenAI-compatible /v1/embeddings through to
@@ -98,26 +103,40 @@ func handleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request, cfg Config) 
 		return
 	}
 	clientModel, _ := body["model"].(string)
-	backend, upstream, rerr := cfg.route(clientModel)
-	if rerr != nil {
-		metrics.Record(clientModel, clientModel, app, "/v1/embeddings", 400, 0, 0, time.Since(start), true)
-		writeJSON(w, 400, map[string]string{"error": rerr.Error()})
-		return
+
+	build := func(up string) []byte {
+		if _, ok := body["model"].(string); ok {
+			body["model"] = up
+		}
+		b, _ := json.Marshal(body)
+		return b
 	}
-	if _, ok := body["model"].(string); ok {
-		body["model"] = upstream
+
+	var resp *http.Response
+	err, lastUpstream, retries, fallbacks := cfg.resolve(clientModel, func(b Backend, up string) (error, bool) {
+		r, e := rawAttempt(b, "/v1/embeddings", build(up))
+		if e == nil {
+			resp = r
+		}
+		return e, false
+	})
+	if retries > 0 {
+		metrics.RecordRetries(clientModel, app, retries)
 	}
-	b, err := json.Marshal(body)
+	if fallbacks > 0 {
+		metrics.RecordFallbacks(clientModel, app, fallbacks)
+	}
 	if err != nil {
-		writeJSON(w, 500, map[string]string{"error": "internal error"})
+		status := errorStatus(statusOf(err))
+		metrics.Record(clientModel, lastUpstream, app, "/v1/embeddings", status, 0, 0, time.Since(start), true)
+		writeJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
+
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.WriteHeader(resp.StatusCode)
 	var usage Usage
-	status, err := forwardRaw(backend, "/v1/embeddings", b, w, &usage)
-	if err != nil && status == 0 {
-		status = 502
-		writeJSON(w, 502, map[string]string{"error": err.Error()})
-	}
-	isErr := err != nil || status >= 400
-	metrics.Record(clientModel, upstream, app, "/v1/embeddings", status, 0, 0, time.Since(start), isErr)
+	copyBody(resp.Body, w, &usage)
+	metrics.Record(clientModel, lastUpstream, app, "/v1/embeddings", resp.StatusCode, 0, 0, time.Since(start), resp.StatusCode >= 400)
 }

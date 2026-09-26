@@ -106,13 +106,17 @@ func (cs *circuitSet) state() map[string]bool {
 var circuits = newCircuits(3, 30*time.Second)
 
 // do performs an upstream request through the backend's circuit breaker. On
-// error it returns an *upstreamError (status 503 for a tripped circuit, 0 for a
-// transport failure); non-transient HTTP responses pass through untouched.
+// error it returns errCircuitOpen (tripped breaker) or an *upstreamError with
+// status 0 (transport failure); non-transient HTTP responses pass through.
 func do(b Backend, req *http.Request) (*http.Response, error) {
 	if !circuits.allow(b.Name) {
-		return nil, &upstreamError{503, "backend " + b.Name + " circuit open"}
+		return nil, errCircuitOpen
 	}
-	resp, err := httpClient.Do(req)
+	client := httpClient
+	if b.Local {
+		client = httpClientLocal
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		if circuits.recordFailure(b.Name) {
 			metrics.RecordCircuitTrip(b.Name)

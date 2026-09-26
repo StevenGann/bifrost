@@ -25,7 +25,7 @@ func handleOpenAIModels(w http.ResponseWriter, cfg Config) {
 // handleOpenAIChat is a pass-through: it decodes the body as a generic JSON
 // object (so client-specific fields survive), remaps the model to its routed
 // backend + upstream name, and forwards to the backend verbatim — preserving
-// streaming SSE or JSON.
+// streaming SSE or JSON. Transient failures retry and fail over invisibly.
 func handleOpenAIChat(w http.ResponseWriter, r *http.Request, cfg Config) {
 	app := appFrom(r)
 	start := time.Now()
@@ -35,27 +35,47 @@ func handleOpenAIChat(w http.ResponseWriter, r *http.Request, cfg Config) {
 		return
 	}
 	clientModel, _ := body["model"].(string)
-	backend, upstreamModel, rerr := cfg.route(clientModel)
-	if rerr != nil {
-		metrics.Record(clientModel, clientModel, app, "/v1/chat/completions", 400, 0, 0, time.Since(start), true)
-		writeJSON(w, 400, map[string]string{"error": rerr.Error()})
-		return
+	stream, _ := body["stream"].(bool)
+
+	build := func(up string) []byte {
+		if _, ok := body["model"].(string); ok {
+			body["model"] = up
+		}
+		b, _ := json.Marshal(body)
+		return b
 	}
-	if _, ok := body["model"].(string); ok {
-		body["model"] = upstreamModel
+
+	var resp *http.Response
+	err, lastUpstream, retries, fallbacks := cfg.resolve(clientModel, func(b Backend, up string) (error, bool) {
+		r, e := rawAttempt(b, "/v1/chat/completions", build(up))
+		if e == nil {
+			resp = r
+		}
+		return e, false
+	})
+
+	if retries > 0 {
+		metrics.RecordRetries(clientModel, app, retries)
 	}
-	b, err := json.Marshal(body)
+	if fallbacks > 0 {
+		metrics.RecordFallbacks(clientModel, app, fallbacks)
+	}
+
 	if err != nil {
-		writeJSON(w, 500, map[string]string{"error": "internal error"})
+		status := errorStatus(statusOf(err))
+		metrics.Record(clientModel, lastUpstream, app, "/v1/chat/completions", status, 0, 0, time.Since(start), true)
+		writeJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
 
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.WriteHeader(resp.StatusCode)
 	var usage Usage
-	status, err := forwardRaw(backend, "/v1/chat/completions", b, w, &usage)
-	if err != nil && status == 0 {
-		status = 502
-		writeJSON(w, 502, map[string]string{"error": err.Error()})
+	if stream {
+		copyStream(resp.Body, w, &usage)
+	} else {
+		copyBody(resp.Body, w, &usage)
 	}
-	isErr := err != nil || status >= 400
-	metrics.Record(clientModel, upstreamModel, app, "/v1/chat/completions", status, usage.PromptTokens, usage.CompletionTokens, time.Since(start), isErr)
+	metrics.Record(clientModel, lastUpstream, app, "/v1/chat/completions", resp.StatusCode, usage.PromptTokens, usage.CompletionTokens, time.Since(start), resp.StatusCode >= 400)
 }

@@ -6,12 +6,25 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 )
 
 var httpClient = &http.Client{Timeout: 300 * time.Second}
+
+// httpClientLocal uses a short dial timeout (3s): LAN backends respond in
+// milliseconds, so a powered-off nomadic worker fails fast instead of hanging
+// on the default 30s dial timeout before the circuit breaker can open.
+var httpClientLocal = &http.Client{
+	Timeout: 300 * time.Second,
+	Transport: func() *http.Transport {
+		t := http.DefaultTransport.(*http.Transport).Clone()
+		t.DialContext = (&net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+		return t
+	}(),
+}
 
 // OpenAIMessage is a single chat message in OpenAI format (also used for
 // Ollama's messages field, which is structurally identical).
@@ -99,27 +112,29 @@ func upstreamReq(b Backend, method, path string, body []byte) (*http.Request, er
 }
 
 // streamChat POSTs a streaming chat completion and calls onChunk for each
-// content delta. It injects stream_options.include_usage so the final chunk
-// carries token usage, which is written to *usage.
-func streamChat(b Backend, oreq OpenAIRequest, onChunk func(content string) error, usage *Usage) error {
+// content delta. It returns committed=true once the first chunk is about to
+// reach the client, after which retry/failover is impossible. Pre-commit
+// failures (connect, non-200) return committed=false so the caller can retry
+// or fail over transparently. Token usage is written to *usage.
+func streamChat(b Backend, oreq OpenAIRequest, onChunk func(content string) error, usage *Usage) (committed bool, err error) {
 	oreq.Stream = true
 	oreq.StreamOptions = &StreamOptions{IncludeUsage: true}
 	body, err := json.Marshal(oreq)
 	if err != nil {
-		return err
+		return false, err
 	}
 	req, err := upstreamReq(b, "POST", "/v1/chat/completions", body)
 	if err != nil {
-		return err
+		return false, err
 	}
 	resp, err := do(b, req)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
-		return fmt.Errorf("upstream %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+		buf, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+		return false, fmt.Errorf("upstream %d: %s", resp.StatusCode, strings.TrimSpace(string(buf)))
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -145,12 +160,16 @@ func streamChat(b Backend, oreq OpenAIRequest, onChunk func(content string) erro
 			if content == "" {
 				continue
 			}
+			committed = true // about to write the first/next chunk to the client
 			if err := onChunk(content); err != nil {
-				return err
+				return committed, err
 			}
 		}
 	}
-	return scanner.Err()
+	if scanner.Err() != nil {
+		return committed, scanner.Err()
+	}
+	return committed, nil
 }
 
 // chat performs a non-streaming chat completion and returns the parsed body
@@ -182,12 +201,12 @@ func chat(b Backend, oreq OpenAIRequest) (*OpenAIChatResponse, Usage, error) {
 	return &out, out.Usage.toUsage(), nil
 }
 
-// forwardRaw forwards an upstream request and copies its response body verbatim
-// (used by the /v1 pass-through), while capturing token usage. Streaming
-// requests get stream_options.include_usage injected so the final chunk carries
-// usage. It returns the HTTP status written (0 if nothing was written because
-// the dial/request failed before any headers went out).
-func forwardRaw(b Backend, path string, body []byte, w http.ResponseWriter, usage *Usage) (int, error) {
+// rawAttempt performs one /v1 passthrough attempt, returning the upstream
+// response on success (2xx and client-error 4xx pass through untouched).
+// Transient failures (connection, 429, 5xx) return an error so the caller can
+// retry/fail over before anything reaches the client. Streaming requests get
+// stream_options.include_usage injected.
+func rawAttempt(b Backend, path string, body []byte) (*http.Response, error) {
 	var probe struct {
 		Stream bool `json:"stream"`
 	}
@@ -204,25 +223,18 @@ func forwardRaw(b Backend, path string, body []byte, w http.ResponseWriter, usag
 
 	req, err := upstreamReq(b, "POST", path, body)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	resp, err := do(b, req)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	defer resp.Body.Close()
-	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
-	w.WriteHeader(resp.StatusCode)
-	if resp.StatusCode != http.StatusOK {
-		_, err = io.Copy(w, resp.Body)
-		return resp.StatusCode, err
+	if resp.StatusCode == 429 || resp.StatusCode >= 500 {
+		buf, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+		resp.Body.Close()
+		return nil, &upstreamError{resp.StatusCode, fmt.Sprintf("upstream %d: %s", resp.StatusCode, strings.TrimSpace(string(buf)))}
 	}
-	if probe.Stream {
-		err = copyStream(resp.Body, w, usage)
-	} else {
-		err = copyBody(resp.Body, w, usage)
-	}
-	return resp.StatusCode, err
+	return resp, nil
 }
 
 // copyStream copies an SSE stream verbatim (preserving line endings) while

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -79,8 +80,8 @@ func TestDoFailsFastWhenCircuitOpen(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected circuit-open error")
 	}
-	if ue, ok := err.(*upstreamError); !ok || ue.status != 503 {
-		t.Fatalf("expected 503 *upstreamError, got %T %v", err, err)
+	if !errors.Is(err, errCircuitOpen) {
+		t.Fatalf("expected errCircuitOpen, got %T %v", err, err)
 	}
 	if called {
 		t.Fatal("server must not be called when the circuit is open")
