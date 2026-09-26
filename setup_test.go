@@ -15,5 +15,6 @@ func TestMain(m *testing.M) {
 	governor = newGovernor(Config{})
 	lruCache = newCache(0, 0)
 	circuits = newCircuits(1000, time.Hour)
+	health = &backendHealth{m: map[string]bool{}}
 	os.Exit(m.Run())
 }

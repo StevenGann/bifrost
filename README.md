@@ -56,6 +56,7 @@ Bifrost routes client-facing model names to one or more upstream backends.
 | `CACHE_MAX` | Max cached entries (default `256`) |
 | `CIRCUIT_THRESHOLD` | Consecutive failures before a backend's circuit opens (default `3`) |
 | `CIRCUIT_COOLDOWN` | Seconds before a half-open probe is attempted (default `30`) |
+| `HEALTH_INTERVAL` | Seconds between backend health polls (default `15`; `0` disables) |
 
 ```bash
 BACKENDS='[{"name":"deepseek","base_url":"https://api.deepseek.com","api_key_env":"UPSTREAM_API_KEY"}]'
@@ -120,10 +121,14 @@ the only thing a client can observe.
 Each backend also gets a circuit breaker: after `CIRCUIT_THRESHOLD` consecutive
 failures it opens, so requests fail fast (503) — or fail over instantly to a
 fallback — instead of hanging on a downed backend. This matters for itinerant
-local workers (e.g. Epsilon) that come and go. After `CIRCUIT_COOLDOWN` it
-half-opens to admit a probe and re-close on success. Local backends use a short
-3s dial timeout so a powered-off worker fails over in seconds, not 30s. Surfaced
-as `bifrost_circuit_trips_total` + `bifrost_circuit_open`.
+local workers (e.g. Epsilon) that come and go. A health poller probes every
+backend on `HEALTH_INTERVAL` and pre-opens the circuit while a backend is
+unreachable, so absence is *noticed* before any request discovers it. After
+`CIRCUIT_COOLDOWN` (or a poll confirming recovery) it half-opens to admit a
+probe and re-close on success. Local backends use a short 3s dial timeout so a
+powered-off worker fails over in seconds, not 30s. Surfaced as
+`bifrost_circuit_trips_total`, `bifrost_circuit_open`, and
+`bifrost_backend_healthy`.
 
 ## Governance
 

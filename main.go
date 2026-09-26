@@ -45,6 +45,7 @@ type Config struct {
 	CacheMax         int
 	CircuitThreshold int
 	CircuitCooldown  int
+	HealthInterval   int
 }
 
 // metrics is the package-level collector. It is initialized to a working
@@ -166,6 +167,7 @@ func loadConfig() Config {
 		CacheMax:         envInt("CACHE_MAX", 256),
 		CircuitThreshold: envInt("CIRCUIT_THRESHOLD", 3),
 		CircuitCooldown:  envInt("CIRCUIT_COOLDOWN", 30),
+		HealthInterval:   envInt("HEALTH_INTERVAL", 15),
 	}
 
 	// Multi-backend config: BACKENDS=[...] + ROUTES={"client":"backend/model"}.
@@ -312,6 +314,9 @@ func main() {
 	governor = newGovernor(cfg)
 	lruCache = newCacheFromConfig(cfg.CacheTTL, cfg.CacheMax)
 	circuits = newCircuits(cfg.CircuitThreshold, time.Duration(cfg.CircuitCooldown)*time.Second)
+	if cfg.HealthInterval > 0 {
+		startHealthPoller(cfg, time.Duration(cfg.HealthInterval)*time.Second)
+	}
 
 	mux := http.NewServeMux()
 

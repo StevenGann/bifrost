@@ -44,6 +44,11 @@ below turns it into a bridge with a real decision layer.
   before anything reaches the client; streaming retries up to the first flushed
   byte. Local backends dial with a 3s timeout so a downed worker fails over in
   seconds. The client sees one slow success, never an internal failure.
+- **Proactive health polling (v0.12):** a poller probes every backend on
+  `HEALTH_INTERVAL` and pre-opens the circuit while a backend is unreachable, so
+  the first request after an outage fails over instantly instead of paying the
+  retry cost. On recovery it half-opens to re-admit traffic. Exposed as
+  `bifrost_backend_healthy` per backend.
 - Single static binary, stdlib-only, deployed on Hyperion at `bifrost.lab:11434`;
   the only state is an optional spend ledger file.
 

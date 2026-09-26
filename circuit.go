@@ -51,6 +51,30 @@ func (c *Circuit) recordSuccess() {
 	c.openedAt = time.Time{}
 }
 
+// markDown force-opens the circuit (the health poller confirmed the backend is
+// unreachable). It reports whether the circuit newly opened. When already open,
+// it refreshes the open window so the cooldown probe can't fire mid-outage.
+func (c *Circuit) markDown() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	wasOpen := c.failures >= c.threshold
+	c.failures = c.threshold
+	c.openedAt = time.Now()
+	return !wasOpen
+}
+
+// markUp half-opens a tripped circuit: the next request is admitted as a probe.
+// A no-op while the circuit is closed (don't nudge a healthy circuit toward
+// opening).
+func (c *Circuit) markUp() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.failures >= c.threshold {
+		c.failures = c.threshold - 1
+		c.openedAt = time.Time{}
+	}
+}
+
 func (c *Circuit) open() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -89,6 +113,8 @@ func (cs *circuitSet) forName(name string) *Circuit {
 func (cs *circuitSet) recordFailure(name string) bool { return cs.forName(name).recordFailure() }
 func (cs *circuitSet) recordSuccess(name string)      { cs.forName(name).recordSuccess() }
 func (cs *circuitSet) allow(name string) bool         { return cs.forName(name).allow() }
+func (cs *circuitSet) markDown(name string) bool      { return cs.forName(name).markDown() }
+func (cs *circuitSet) markUp(name string)             { cs.forName(name).markUp() }
 
 // state returns the open/closed status of every backend seen so far.
 func (cs *circuitSet) state() map[string]bool {

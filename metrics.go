@@ -307,6 +307,21 @@ func (m *Metrics) writeLocked(w io.Writer) {
 		fmt.Fprintf(w, "bifrost_circuit_open{backend=%q} %d\n", name, v)
 	}
 
+	healthNames := make([]string, 0, 4)
+	for name := range health.state() {
+		healthNames = append(healthNames, name)
+	}
+	sort.Strings(healthNames)
+	fmt.Fprintf(w, "# HELP bifrost_backend_healthy 1 if the backend answered the last health poll.\n")
+	fmt.Fprintf(w, "# TYPE bifrost_backend_healthy gauge\n")
+	for _, name := range healthNames {
+		v := 0
+		if health.state()[name] {
+			v = 1
+		}
+		fmt.Fprintf(w, "bifrost_backend_healthy{backend=%q} %d\n", name, v)
+	}
+
 	fmt.Fprintf(w, "# HELP bifrost_request_duration_seconds Completion request latency.\n")
 	fmt.Fprintf(w, "# TYPE bifrost_request_duration_seconds histogram\n")
 	for _, k := range maKeys {
