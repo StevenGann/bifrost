@@ -29,12 +29,17 @@ type Route struct {
 }
 
 type Config struct {
-	Port      string
-	Backends  map[string]Backend
-	Default   string
-	Routes    map[string]Route
-	Retries   int
-	Fallbacks map[string]string
+	Port       string
+	Backends   map[string]Backend
+	Default    string
+	Routes     map[string]Route
+	Retries    int
+	Fallbacks  map[string]string
+	Budget     float64
+	AppBudgets map[string]float64
+	AppKeys    map[string]string
+	RateLimit  int
+	LedgerFile string
 }
 
 // metrics is the package-level collector. It is initialized to a working
@@ -53,6 +58,15 @@ func envInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return def
+}
+
+func envFloat(key string, def float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
 		}
 	}
 	return def
@@ -133,11 +147,16 @@ func parseModels(s, backend string) []Route {
 
 func loadConfig() Config {
 	cfg := Config{
-		Port:      envOr("PORT", "11434"),
-		Backends:  map[string]Backend{},
-		Routes:    map[string]Route{},
-		Retries:   envInt("RETRIES", 2),
-		Fallbacks: map[string]string{},
+		Port:       envOr("PORT", "11434"),
+		Backends:   map[string]Backend{},
+		Routes:     map[string]Route{},
+		Retries:    envInt("RETRIES", 2),
+		Fallbacks:  map[string]string{},
+		Budget:     envFloat("BUDGET", 0),
+		AppBudgets: map[string]float64{},
+		AppKeys:    map[string]string{},
+		RateLimit:  envInt("RATE_LIMIT", 0),
+		LedgerFile: envOr("LEDGER_FILE", ""),
 	}
 
 	// Multi-backend config: BACKENDS=[...] + ROUTES={"client":"backend/model"}.
@@ -191,6 +210,16 @@ func loadConfig() Config {
 			log.Printf("WARNING: ignoring malformed FALLBACKS: %v", err)
 		}
 	}
+	if raw := os.Getenv("APP_BUDGETS"); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &cfg.AppBudgets); err != nil {
+			log.Printf("WARNING: ignoring malformed APP_BUDGETS: %v", err)
+		}
+	}
+	if raw := os.Getenv("APP_KEYS"); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &cfg.AppKeys); err != nil {
+			log.Printf("WARNING: ignoring malformed APP_KEYS: %v", err)
+		}
+	}
 
 	return cfg
 }
@@ -242,11 +271,11 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// appFrom identifies the calling app for metrics from the X-Bifrost-App header,
-// falling back to "unknown".
+// appFrom returns the authenticated app identity, set on the request context by
+// the governance middleware; falls back to "unknown" for direct handler calls.
 func appFrom(r *http.Request) string {
-	if a := strings.TrimSpace(r.Header.Get("X-Bifrost-App")); a != "" {
-		return a
+	if app, ok := r.Context().Value(appCtxKey).(string); ok && app != "" {
+		return app
 	}
 	return "unknown"
 }
@@ -271,13 +300,14 @@ func loadPricing() map[string]pricing {
 func main() {
 	cfg := loadConfig()
 	metrics = newMetrics(loadPricing())
+	governor = newGovernor(cfg)
 
 	mux := http.NewServeMux()
 
 	// Ollama-native API
 	mux.HandleFunc("GET /api/tags", func(w http.ResponseWriter, r *http.Request) { handleTags(w, cfg) })
-	mux.HandleFunc("POST /api/chat", func(w http.ResponseWriter, r *http.Request) { handleChat(w, r, cfg) })
-	mux.HandleFunc("POST /api/generate", func(w http.ResponseWriter, r *http.Request) { handleGenerate(w, r, cfg) })
+	mux.HandleFunc("POST /api/chat", governor.Wrap(func(w http.ResponseWriter, r *http.Request) { handleChat(w, r, cfg) }))
+	mux.HandleFunc("POST /api/generate", governor.Wrap(func(w http.ResponseWriter, r *http.Request) { handleGenerate(w, r, cfg) }))
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]string{"version": "0.1.0-bifrost"})
 	})
@@ -286,7 +316,7 @@ func main() {
 
 	// OpenAI-compatible API (same as Ollama's /v1)
 	mux.HandleFunc("GET /v1/models", func(w http.ResponseWriter, r *http.Request) { handleOpenAIModels(w, cfg) })
-	mux.HandleFunc("POST /v1/chat/completions", func(w http.ResponseWriter, r *http.Request) { handleOpenAIChat(w, r, cfg) })
+	mux.HandleFunc("POST /v1/chat/completions", governor.Wrap(func(w http.ResponseWriter, r *http.Request) { handleOpenAIChat(w, r, cfg) }))
 
 	// Ops
 	mux.Handle("GET /{$}", metrics.Dashboard())

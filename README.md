@@ -9,7 +9,7 @@ Named for the Norse rainbow bridge: it carries requests from Ollama-speaking
 clients (Midgard) to the LLM backend (Asgard).
 
 See **[docs/ROADMAP.md](docs/ROADMAP.md)** for where this is going (multi-backend
-routing, embeddings, privacy routing, caching, resilience, and more).
+routing, embeddings, privacy routing, caching, resilience, governance, and more).
 
 ## Why
 
@@ -18,7 +18,8 @@ routing, embeddings, privacy routing, caching, resilience, and more).
 - **Backend-swappable.** Repoint `UPSTREAM_BASE_URL` to switch from DeepSeek to a
   local vLLM/Ollama server without touching any client.
 - **Observable.** Prometheus `/metrics` with token, cost, and latency accounting.
-- **Tiny.** A single ~10 MB static Go binary, no runtime deps, no state.
+- **Tiny.** A single ~10 MB static Go binary, no runtime deps, near-zero state
+  (one optional spend ledger file).
 - **Private by default.** PII is scrubbed from cloud-bound traffic, and
   `private:*` models never leave the LAN.
 
@@ -46,6 +47,11 @@ Bifrost routes client-facing model names to one or more upstream backends.
 | `RETRIES` | Retries for transient failures — network, `429`, `5xx` (default `2`) |
 | `FALLBACKS` | JSON `{"model":"fallback-model"}` — fall back when the primary fails |
 | `PRICING` | JSON `{"model":{"input":x,"output":y}}` USD/1M tokens, merged over DeepSeek defaults |
+| `BUDGET` | Monthly spend cap in USD (default `0` = unlimited) — over budget → `402` |
+| `APP_BUDGETS` | JSON `{"app":usd}` per-app monthly cap |
+| `RATE_LIMIT` | Per-app requests/minute (default `0` = unlimited) — exceeded → `429` |
+| `APP_KEYS` | JSON `{"app":"bearer-key"}` — when set, requires a valid key (else `401`) |
+| `LEDGER_FILE` | Path to the JSONL spend ledger (e.g. `/data/spend.jsonl`) |
 
 ```bash
 BACKENDS='[{"name":"deepseek","base_url":"https://api.deepseek.com","api_key_env":"UPSTREAM_API_KEY"}]'
@@ -103,6 +109,17 @@ Non-streaming completions retry transient failures (network, `429`, `5xx`) with
 exponential backoff (`RETRIES`) and fall back through a model chain (`FALLBACKS`)
 when the primary fails for good. Streaming and `/v1` passthrough stay
 single-attempt — retrying a half-flushed stream would corrupt the client.
+
+## Governance
+
+Hard monthly budgets (global `BUDGET` + per-app `APP_BUDGETS`), per-app rate
+limits (`RATE_LIMIT`), and optional per-app bearer auth (`APP_KEYS`). Spend is
+tracked in a durable JSONL ledger (`LEDGER_FILE`) so budgets survive restarts.
+Over budget → `402`, rate-limited → `429`, unauthenticated → `401`.
+
+Without `APP_KEYS`, the `X-Bifrost-App` header still identifies callers for
+metrics — but it is self-reported (any client can claim to be any app). Deploy
+`APP_KEYS` when per-app budgets need to be authoritative.
 
 ## API surface
 

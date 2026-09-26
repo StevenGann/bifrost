@@ -23,8 +23,13 @@ below turns it into a bridge with a real decision layer.
   estimated cost (cache-miss rates, peak/off-peak aware), latency histogram, and
   error counts, labeled by model and app (`X-Bifrost-App` header) — plus a bespoke
   live HTML dashboard at `/` (zero-JS, server-rendered).
-- Stateless, single static binary, stdlib-only, deployed on Hyperion at
-  `bifrost.lab:11434`.
+- **Governance (v0.7):** hard monthly budgets (global `BUDGET` + per-app
+  `APP_BUDGETS`), per-app rate limits (`RATE_LIMIT`), and optional per-app bearer
+  auth (`APP_KEYS`) — backed by a durable JSONL spend ledger (`LEDGER_FILE`) so
+  budgets survive restarts. Over budget → `402`, rate-limited → `429`,
+  unauthenticated → `401`.
+- Single static binary, stdlib-only, deployed on Hyperion at `bifrost.lab:11434`;
+  the only state is an optional spend ledger file.
 
 ## Initiatives (priority order)
 
@@ -76,13 +81,22 @@ fails for good. `bifrost_retries_total` + `bifrost_fallbacks_total` counters.
 Streaming and `/v1` passthrough stay single-attempt (retrying a half-flushed
 stream would corrupt the client). JSON-output repair remains a future increment.
 
-### 7. Model catalog with metadata ⬜
+### 7. Governance: budgets, rate limits, auth — ✅ shipped (v0.7)
+
+Hard monthly budgets (global `BUDGET` + per-app `APP_BUDGETS`), per-app rate
+limits (`RATE_LIMIT`, requests/min), and optional per-app bearer auth (`APP_KEYS`,
+`app→key`). Spend is tracked in a durable JSONL ledger (`LEDGER_FILE`) so budgets
+survive restarts. Over budget → `402`, rate-limited → `429`, unauthenticated →
+`401`. Without `APP_KEYS`, the `X-Bifrost-App` header still works (spoofable —
+deploy keys when per-app budgets need to be trusted).
+
+### 8. Model catalog with metadata ⬜
 
 `/v1/models` returns not just names but capabilities, cost, latency, and privacy
 tier — so an app can ask "what's available and what's right for me" instead of
 hardcoding a model.
 
-### 8. Retrieval endpoint ⬜ *(stretch)*
+### 9. Retrieval endpoint ⬜ *(stretch)*
 
 `/v1/retrieval` — embeddings + vector search over the vault, so agents get
 semantic search without each reimplementing it.

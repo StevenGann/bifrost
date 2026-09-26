@@ -105,8 +105,9 @@ func newMetrics(p map[string]pricing) *Metrics {
 }
 
 // Record a completed completion request. clientModel is the caller-facing name
-// used as the metric label; upstreamModel is what cost is priced against.
-func (m *Metrics) Record(clientModel, upstreamModel, app, endpoint string, status int, tokIn, tokOut int, dur time.Duration, isErr bool) {
+// used as the metric label; upstreamModel is what cost is priced against. It
+// returns the estimated USD cost and feeds the durable spend ledger.
+func (m *Metrics) Record(clientModel, upstreamModel, app, endpoint string, status int, tokIn, tokOut int, dur time.Duration, isErr bool) float64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ma := clientModel + "|" + app
@@ -141,6 +142,11 @@ func (m *Metrics) Record(clientModel, upstreamModel, app, endpoint string, statu
 		DurationMs: dur.Seconds() * 1000,
 		Err:        isErr,
 	})
+
+	if c > 0 {
+		governor.Record(app, upstreamModel, c)
+	}
+	return c
 }
 
 func (m *Metrics) cost(upstreamModel string, tokIn, tokOut int) float64 {
