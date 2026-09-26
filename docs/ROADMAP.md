@@ -54,15 +54,11 @@ below turns it into a bridge with a real decision layer.
   served when cosine similarity clears `SEMANTIC_THRESHOLD`. First real use of
   the local embeddings: a reworded question hits cache instead of upstream.
   Degrades gracefully when the embedding backend is down.
-- **Retrieval / RAG (v0.14):** a small private retrieval engine — ingest
-  documents, retrieve top-k chunks, and `private:*` models are automatically
-  grounded in the index. First real use of the local *chat* model: it answers
-  questions from your own documents.
 - **Model catalog (v0.15):** `/v1/models` (and `/v1/models/{name}`) return each
   model's privacy tier, backend, upstream model, capabilities, and per-1M-token
   pricing — agents can discover and pick instead of hardcoding model names.
 - Single static binary, stdlib-only, deployed on Hyperion at `bifrost.lab:11434`;
-  the only state is an optional spend ledger and retrieval index (both opt-in files).
+  the only state is an optional spend ledger file.
 
 ## Initiatives (priority order)
 
@@ -138,17 +134,15 @@ and per-1M-token pricing — so an agent can ask "what's available and what's
 right for me" instead of hardcoding a model. `/api/tags` sets `details.family`
 to the same privacy tier for Ollama clients.
 
-### 9. Retrieval / RAG — ✅ shipped (v0.14)
+### 9. Retrieval endpoint ⬜ *(stretch)*
 
-`POST /api/documents` ingests documents (chunk → embed → store in a small
-in-memory linear-scan index); `POST /api/retrieve` returns top-k chunks; and
-`private:*` chat is automatically grounded in the index. This makes the local
-chat model useful for the first time — private Q&A over your own documents.
+`/v1/retrieval` — embeddings + vector search over the vault, so agents get
+semantic search without each reimplementing it.
 
 ## Non-goals
 
 - **A model runner** — vLLM/llama.cpp already own that.
 - **A training pipeline.**
-- **A full vector database** — retrieval uses a small in-memory linear-scan index (homelab scale); a real ANN store stays out of scope.
+- **A full vector database** — delegate to an existing store rather than embed one.
 
 Bifrost stays thin: its value is the *decision layer*, not the compute.

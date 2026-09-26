@@ -353,10 +353,6 @@ func (m *Metrics) writeLocked(w io.Writer) {
 		fmt.Fprintf(w, "bifrost_backend_healthy{backend=%q} %d\n", name, v)
 	}
 
-	fmt.Fprintf(w, "# HELP bifrost_index_chunks Number of chunks in the retrieval index.\n")
-	fmt.Fprintf(w, "# TYPE bifrost_index_chunks gauge\n")
-	fmt.Fprintf(w, "bifrost_index_chunks %d\n", docIndex.Len())
-
 	fmt.Fprintf(w, "# HELP bifrost_request_duration_seconds Completion request latency.\n")
 	fmt.Fprintf(w, "# TYPE bifrost_request_duration_seconds histogram\n")
 	for _, k := range maKeys {

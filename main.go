@@ -49,10 +49,6 @@ type Config struct {
 	SemanticCache     bool
 	SemanticThreshold float64
 	EmbedModel        string
-	IndexFile         string
-	ChunkSize         int
-	ChunkOverlap      int
-	RetrieveK         int
 }
 
 // metrics is the package-level collector. It is initialized to a working
@@ -190,10 +186,6 @@ func loadConfig() Config {
 		SemanticCache:     envBool("SEMANTIC_CACHE", false),
 		SemanticThreshold: envFloat("SEMANTIC_THRESHOLD", 0.92),
 		EmbedModel:        envOr("EMBED_MODEL", "embed"),
-		IndexFile:         envOr("INDEX_FILE", ""),
-		ChunkSize:         envInt("CHUNK_SIZE", 1000),
-		ChunkOverlap:      envInt("CHUNK_OVERLAP", 100),
-		RetrieveK:         envInt("RETRIEVE_K", 3),
 	}
 
 	// Multi-backend config: BACKENDS=[...] + ROUTES={"client":"backend/model"}.
@@ -343,11 +335,6 @@ func main() {
 	if cfg.SemanticCache {
 		semanticCache = newSemanticCache(cfg.CacheMax, time.Duration(cfg.CacheTTL)*time.Second, cfg.SemanticThreshold)
 	}
-	if cfg.IndexFile != "" {
-		if err := docIndex.Load(cfg.IndexFile); err != nil {
-			log.Printf("WARNING: retrieval index not loaded: %v", err)
-		}
-	}
 	if cfg.HealthInterval > 0 {
 		startHealthPoller(cfg, time.Duration(cfg.HealthInterval)*time.Second)
 	}
@@ -363,8 +350,6 @@ func main() {
 	})
 	mux.HandleFunc("POST /api/embeddings", governor.Wrap(func(w http.ResponseWriter, r *http.Request) { handleEmbeddings(w, r, cfg) }))
 	mux.HandleFunc("POST /api/embed", governor.Wrap(func(w http.ResponseWriter, r *http.Request) { handleEmbeddings(w, r, cfg) }))
-	mux.HandleFunc("POST /api/documents", governor.Wrap(func(w http.ResponseWriter, r *http.Request) { handleDocuments(w, r, cfg) }))
-	mux.HandleFunc("POST /api/retrieve", governor.Wrap(func(w http.ResponseWriter, r *http.Request) { handleRetrieve(w, r, cfg) }))
 
 	// OpenAI-compatible API (same as Ollama's /v1)
 	mux.HandleFunc("GET /v1/models", func(w http.ResponseWriter, r *http.Request) { handleOpenAIModels(w, cfg) })

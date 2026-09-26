@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -126,17 +125,6 @@ func handleChat(w http.ResponseWriter, r *http.Request, cfg Config) {
 	}
 	clientModel := req.Model
 
-	// Ground private models in the retrieval index: prepend the top-k relevant
-	// chunks as a system message so the model answers from the user's documents.
-	// Silent no-op when the index is empty or retrieval fails (e.g. Epsilon down).
-	if strings.HasPrefix(clientModel, "private:") && docIndex.Len() > 0 {
-		if q := lastUserContent(req.Messages); q != "" {
-			if ctx, err := cfg.retrieveContext(q); err == nil && ctx != "" {
-				req.Messages = prependContext(req.Messages, ctx)
-			}
-		}
-	}
-
 	if req.Stream {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		fl, ok := w.(http.Flusher)
@@ -210,13 +198,6 @@ func handleGenerate(w http.ResponseWriter, r *http.Request, cfg Config) {
 		return
 	}
 	clientModel := req.Model
-
-	// Ground private models in the retrieval index (same as /api/chat).
-	if strings.HasPrefix(clientModel, "private:") && docIndex.Len() > 0 {
-		if ctx, err := cfg.retrieveContext(req.Prompt); err == nil && ctx != "" {
-			req.System = contextSystem(req.System, ctx)
-		}
-	}
 
 	messages := make([]OpenAIMessage, 0, 2)
 	if req.System != "" {
