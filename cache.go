@@ -91,10 +91,12 @@ func cacheKey(endpoint string, v any) string {
 // replaced by main() with the env-configured instance.
 var lruCache = newCache(256, 300*time.Second)
 
-// completeCached wraps complete with an exact-match response cache. A hit
-// returns the cached OpenAI response instantly (no upstream call, no cost); a
-// miss calls complete and caches the result. Cache hits/misses are recorded in
-// metrics.
+// completeCached wraps complete with an exact-match response cache plus an
+// opt-in semantic cache. An exact hit returns the cached OpenAI response
+// instantly (no upstream call, no cost). On an exact miss, if semantic caching
+// is enabled the prompt is embedded and a near-neighbor (cosine-similar) cached
+// response is served; otherwise complete is called and the result cached both
+// ways. Cache hits/misses are recorded in metrics.
 func (c Config) completeCached(key string, clientModel, app, endpoint string, build func(string) OpenAIRequest) (*OpenAIChatResponse, Usage, int, error) {
 	if key != "" && lruCache.enabled() {
 		if cached, ok := lruCache.Get(key); ok {
@@ -105,12 +107,40 @@ func (c Config) completeCached(key string, clientModel, app, endpoint string, bu
 			}
 		}
 	}
-	resp, usage, status, err := c.complete(clientModel, app, endpoint, build)
-	if err == nil && key != "" && lruCache.enabled() {
-		if b, e := json.Marshal(resp); e == nil {
-			lruCache.Set(key, b)
+
+	// Semantic lookup: embed the prompt once and reuse the vector to store on
+	// miss. A failed embed (e.g. embedding backend down) degrades to no
+	// semantic caching — the request still proceeds normally.
+	var queryEmb []float64
+	if semanticCache.enabled() {
+		if emb, err := c.embedQuery(queryText(build(""))); err == nil {
+			queryEmb = emb
+			if cached, ok := semanticCache.get(clientModel, emb); ok {
+				var resp OpenAIChatResponse
+				if json.Unmarshal(cached, &resp) == nil {
+					metrics.RecordSemanticHit(clientModel, app)
+					return &resp, Usage{}, 200, nil
+				}
+			}
+			metrics.RecordSemanticMiss(clientModel, app)
 		}
+	}
+
+	resp, usage, status, err := c.complete(clientModel, app, endpoint, build)
+	if err != nil {
+		return resp, usage, status, err
+	}
+
+	var cached []byte
+	if (key != "" && lruCache.enabled()) || queryEmb != nil {
+		cached, _ = json.Marshal(resp)
+	}
+	if cached != nil && key != "" && lruCache.enabled() {
+		lruCache.Set(key, cached)
 		metrics.RecordCacheMiss(clientModel, app)
 	}
-	return resp, usage, status, err
+	if cached != nil && queryEmb != nil {
+		semanticCache.set(clientModel, queryEmb, cached)
+	}
+	return resp, usage, status, nil
 }

@@ -54,6 +54,9 @@ Bifrost routes client-facing model names to one or more upstream backends.
 | `LEDGER_FILE` | Path to the JSONL spend ledger (e.g. `/data/spend.jsonl`) |
 | `CACHE_TTL` | Exact-match cache TTL in seconds (default `300`; `0` disables) |
 | `CACHE_MAX` | Max cached entries (default `256`) |
+| `SEMANTIC_CACHE` | Enable semantic (near-neighbor) caching — embeds prompts and serves similar cached responses (default `false`) |
+| `SEMANTIC_THRESHOLD` | Cosine-similarity threshold for a semantic hit (default `0.92`) |
+| `EMBED_MODEL` | Client model used to embed prompts for semantic caching (default `embed`) |
 | `CIRCUIT_THRESHOLD` | Consecutive failures before a backend's circuit opens (default `3`) |
 | `CIRCUIT_COOLDOWN` | Seconds before a half-open probe is attempted (default `30`) |
 | `HEALTH_INTERVAL` | Seconds between backend health polls (default `15`; `0` disables) |
@@ -148,6 +151,14 @@ from an in-memory exact-match cache, skipping the upstream call entirely — zer
 cost, zero latency. Bounded LRU with TTL (`CACHE_TTL`/`CACHE_MAX`). Never
 persisted (cached responses can echo request PII). `bifrost_cache_hits_total` /
 `bifrost_cache_misses_total` in `/metrics`, hit-rate on the dashboard.
+
+Opt-in **semantic caching** (`SEMANTIC_CACHE=true`) extends this to *similar*
+requests: the prompt is embedded via the `EMBED_MODEL` route and a near-neighbor
+cached response is served when its cosine similarity clears `SEMANTIC_THRESHOLD`.
+This turns the local embedding brain into real cost savings — a reworded question
+hits the cache instead of the upstream. It degrades gracefully: if the embedding
+backend is down, requests simply skip semantic caching and proceed. Tracked as
+`bifrost_semantic_cache_hits_total` / `bifrost_semantic_cache_misses_total`.
 
 ## Embeddings
 

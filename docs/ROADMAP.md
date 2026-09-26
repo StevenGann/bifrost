@@ -49,6 +49,11 @@ below turns it into a bridge with a real decision layer.
   the first request after an outage fails over instantly instead of paying the
   retry cost. On recovery it half-opens to re-admit traffic. Exposed as
   `bifrost_backend_healthy` per backend.
+- **Semantic caching (v0.13):** opt-in near-neighbor cache — prompts are
+  embedded via the local embedding brain and a *similar* cached response is
+  served when cosine similarity clears `SEMANTIC_THRESHOLD`. First real use of
+  the local embeddings: a reworded question hits cache instead of upstream.
+  Degrades gracefully when the embedding backend is down.
 - Single static binary, stdlib-only, deployed on Hyperion at `bifrost.lab:11434`;
   the only state is an optional spend ledger file.
 

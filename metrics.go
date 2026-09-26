@@ -88,6 +88,8 @@ type Metrics struct {
 	fallbacks    map[string]uint64     // "model|app"
 	cacheHits    map[string]uint64     // "model|app"
 	cacheMisses  map[string]uint64     // "model|app"
+	semanticHits map[string]uint64     // "model|app"
+	semanticMiss map[string]uint64     // "model|app"
 	circuitTrips map[string]uint64     // "backend"
 	recent       []requestRecord       // ring buffer (newest last)
 }
@@ -106,6 +108,8 @@ func newMetrics(p map[string]pricing) *Metrics {
 		fallbacks:    map[string]uint64{},
 		cacheHits:    map[string]uint64{},
 		cacheMisses:  map[string]uint64{},
+		semanticHits: map[string]uint64{},
+		semanticMiss: map[string]uint64{},
 		circuitTrips: map[string]uint64{},
 	}
 }
@@ -184,6 +188,19 @@ func (m *Metrics) RecordCacheMiss(model, app string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.cacheMisses[model+"|"+app]++
+}
+
+// RecordSemanticHit/Miss track the opt-in semantic (near-neighbor) cache.
+func (m *Metrics) RecordSemanticHit(model, app string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.semanticHits[model+"|"+app]++
+}
+
+func (m *Metrics) RecordSemanticMiss(model, app string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.semanticMiss[model+"|"+app]++
 }
 
 // RecordCircuitTrip increments the circuit-breaker open counter for a backend.
@@ -289,6 +306,20 @@ func (m *Metrics) writeLocked(w io.Writer) {
 	for _, k := range sortedKeys(m.cacheMisses) {
 		p := strings.SplitN(k, "|", 2)
 		fmt.Fprintf(w, "bifrost_cache_misses_total{model=%q,app=%q} %d\n", p[0], p[1], m.cacheMisses[k])
+	}
+
+	fmt.Fprintf(w, "# HELP bifrost_semantic_cache_hits_total Responses served from a similar cached prompt.\n")
+	fmt.Fprintf(w, "# TYPE bifrost_semantic_cache_hits_total counter\n")
+	for _, k := range sortedKeys(m.semanticHits) {
+		p := strings.SplitN(k, "|", 2)
+		fmt.Fprintf(w, "bifrost_semantic_cache_hits_total{model=%q,app=%q} %d\n", p[0], p[1], m.semanticHits[k])
+	}
+
+	fmt.Fprintf(w, "# HELP bifrost_semantic_cache_misses_total Semantic lookups that found no similar prompt.\n")
+	fmt.Fprintf(w, "# TYPE bifrost_semantic_cache_misses_total counter\n")
+	for _, k := range sortedKeys(m.semanticMiss) {
+		p := strings.SplitN(k, "|", 2)
+		fmt.Fprintf(w, "bifrost_semantic_cache_misses_total{model=%q,app=%q} %d\n", p[0], p[1], m.semanticMiss[k])
 	}
 
 	fmt.Fprintf(w, "# HELP bifrost_circuit_trips_total Circuit-breaker opens, by backend.\n")

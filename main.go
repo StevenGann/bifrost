@@ -30,22 +30,25 @@ type Route struct {
 }
 
 type Config struct {
-	Port             string
-	Backends         map[string]Backend
-	Default          string
-	Routes           map[string]Route
-	Retries          int
-	Fallbacks        map[string]string
-	Budget           float64
-	AppBudgets       map[string]float64
-	AppKeys          map[string]string
-	RateLimit        int
-	LedgerFile       string
-	CacheTTL         int
-	CacheMax         int
-	CircuitThreshold int
-	CircuitCooldown  int
-	HealthInterval   int
+	Port              string
+	Backends          map[string]Backend
+	Default           string
+	Routes            map[string]Route
+	Retries           int
+	Fallbacks         map[string]string
+	Budget            float64
+	AppBudgets        map[string]float64
+	AppKeys           map[string]string
+	RateLimit         int
+	LedgerFile        string
+	CacheTTL          int
+	CacheMax          int
+	CircuitThreshold  int
+	CircuitCooldown   int
+	HealthInterval    int
+	SemanticCache     bool
+	SemanticThreshold float64
+	EmbedModel        string
 }
 
 // metrics is the package-level collector. It is initialized to a working
@@ -73,6 +76,18 @@ func envFloat(key string, def float64) float64 {
 	if v := os.Getenv(key); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			return f
+		}
+	}
+	return def
+}
+
+func envBool(key string, def bool) bool {
+	if v := os.Getenv(key); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			return true
+		case "0", "false", "no", "off":
+			return false
 		}
 	}
 	return def
@@ -153,21 +168,24 @@ func parseModels(s, backend string) []Route {
 
 func loadConfig() Config {
 	cfg := Config{
-		Port:             envOr("PORT", "11434"),
-		Backends:         map[string]Backend{},
-		Routes:           map[string]Route{},
-		Retries:          envInt("RETRIES", 2),
-		Fallbacks:        map[string]string{},
-		Budget:           envFloat("BUDGET", 0),
-		AppBudgets:       map[string]float64{},
-		AppKeys:          map[string]string{},
-		RateLimit:        envInt("RATE_LIMIT", 0),
-		LedgerFile:       envOr("LEDGER_FILE", ""),
-		CacheTTL:         envInt("CACHE_TTL", 300),
-		CacheMax:         envInt("CACHE_MAX", 256),
-		CircuitThreshold: envInt("CIRCUIT_THRESHOLD", 3),
-		CircuitCooldown:  envInt("CIRCUIT_COOLDOWN", 30),
-		HealthInterval:   envInt("HEALTH_INTERVAL", 15),
+		Port:              envOr("PORT", "11434"),
+		Backends:          map[string]Backend{},
+		Routes:            map[string]Route{},
+		Retries:           envInt("RETRIES", 2),
+		Fallbacks:         map[string]string{},
+		Budget:            envFloat("BUDGET", 0),
+		AppBudgets:        map[string]float64{},
+		AppKeys:           map[string]string{},
+		RateLimit:         envInt("RATE_LIMIT", 0),
+		LedgerFile:        envOr("LEDGER_FILE", ""),
+		CacheTTL:          envInt("CACHE_TTL", 300),
+		CacheMax:          envInt("CACHE_MAX", 256),
+		CircuitThreshold:  envInt("CIRCUIT_THRESHOLD", 3),
+		CircuitCooldown:   envInt("CIRCUIT_COOLDOWN", 30),
+		HealthInterval:    envInt("HEALTH_INTERVAL", 15),
+		SemanticCache:     envBool("SEMANTIC_CACHE", false),
+		SemanticThreshold: envFloat("SEMANTIC_THRESHOLD", 0.92),
+		EmbedModel:        envOr("EMBED_MODEL", "embed"),
 	}
 
 	// Multi-backend config: BACKENDS=[...] + ROUTES={"client":"backend/model"}.
@@ -314,6 +332,9 @@ func main() {
 	governor = newGovernor(cfg)
 	lruCache = newCacheFromConfig(cfg.CacheTTL, cfg.CacheMax)
 	circuits = newCircuits(cfg.CircuitThreshold, time.Duration(cfg.CircuitCooldown)*time.Second)
+	if cfg.SemanticCache {
+		semanticCache = newSemanticCache(cfg.CacheMax, time.Duration(cfg.CacheTTL)*time.Second, cfg.SemanticThreshold)
+	}
 	if cfg.HealthInterval > 0 {
 		startHealthPoller(cfg, time.Duration(cfg.HealthInterval)*time.Second)
 	}

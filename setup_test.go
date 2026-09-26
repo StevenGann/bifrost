@@ -16,5 +16,6 @@ func TestMain(m *testing.M) {
 	lruCache = newCache(0, 0)
 	circuits = newCircuits(1000, time.Hour)
 	health = &backendHealth{m: map[string]bool{}}
+	semanticCache = newSemanticCache(0, 0, 0.92)
 	os.Exit(m.Run())
 }
