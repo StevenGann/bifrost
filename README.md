@@ -198,7 +198,8 @@ to `INDEX_FILE` when set (opt-in; empty means in-memory only). Exposed as
 - `POST /api/documents` — ingest documents into the retrieval index
 - `POST /api/retrieve` — retrieve top-k chunks for a query
 - `GET /api/version` — `0.1.0-bifrost`
-- `GET /v1/models` — model list (OpenAI format)
+- `GET /v1/models` — model list with privacy tier, backend, upstream, and pricing (OpenAI format)
+- `GET /v1/models/{name}` — single model's metadata
 - `POST /v1/chat/completions` — passthrough (OpenAI format)
 - `POST /v1/embeddings` — embeddings (OpenAI format)
 - `GET /healthz` — liveness

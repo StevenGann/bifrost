@@ -80,12 +80,12 @@ type ollamaGenerateResponse struct {
 // ---- handlers ----
 
 func handleTags(w http.ResponseWriter, cfg Config) {
-	names := cfg.modelNames()
-	models := make([]ollamaModel, 0, len(names))
-	for _, name := range names {
-		om := ollamaModel{Name: name, Model: name, ModifiedAt: nowRFC3339(), Size: 0, Digest: "sha256:bifrost-proxy"}
+	catalog := cfg.modelCatalog()
+	models := make([]ollamaModel, 0, len(catalog))
+	for _, m := range catalog {
+		om := ollamaModel{Name: m.ID, Model: m.ID, ModifiedAt: nowRFC3339(), Size: 0, Digest: "sha256:bifrost-proxy"}
 		om.Details.Format = "gguf"
-		om.Details.Family = "bifrost"
+		om.Details.Family = m.Privacy
 		models = append(models, om)
 	}
 	writeJSON(w, 200, map[string]any{"models": models})

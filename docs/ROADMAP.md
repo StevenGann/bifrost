@@ -58,6 +58,9 @@ below turns it into a bridge with a real decision layer.
   documents, retrieve top-k chunks, and `private:*` models are automatically
   grounded in the index. First real use of the local *chat* model: it answers
   questions from your own documents.
+- **Model catalog (v0.15):** `/v1/models` (and `/v1/models/{name}`) return each
+  model's privacy tier, backend, upstream model, capabilities, and per-1M-token
+  pricing — agents can discover and pick instead of hardcoding model names.
 - Single static binary, stdlib-only, deployed on Hyperion at `bifrost.lab:11434`;
   the only state is an optional spend ledger and retrieval index (both opt-in files).
 
@@ -127,11 +130,13 @@ survive restarts. Over budget → `402`, rate-limited → `429`, unauthenticated
 `401`. Without `APP_KEYS`, the `X-Bifrost-App` header still works (spoofable —
 deploy keys when per-app budgets need to be trusted).
 
-### 8. Model catalog with metadata ⬜
+### 8. Model catalog with metadata — ✅ shipped (v0.15)
 
-`/v1/models` returns not just names but capabilities, cost, latency, and privacy
-tier — so an app can ask "what's available and what's right for me" instead of
-hardcoding a model.
+`GET /v1/models` (and `/v1/models/{name}`) returns each client model with its
+privacy tier (`private`/`local`/`cloud`), backend, upstream model, capabilities,
+and per-1M-token pricing — so an agent can ask "what's available and what's
+right for me" instead of hardcoding a model. `/api/tags` sets `details.family`
+to the same privacy tier for Ollama clients.
 
 ### 9. Retrieval / RAG — ✅ shipped (v0.14)
 

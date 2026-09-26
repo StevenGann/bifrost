@@ -7,19 +7,10 @@ import (
 )
 
 // handleOpenAIModels serves the OpenAI-compatible model list from the
-// configured routes.
+// configured routes, enriched with privacy tier, backend, upstream model, and
+// per-1M-token pricing so agents can discover what's available and pick.
 func handleOpenAIModels(w http.ResponseWriter, cfg Config) {
-	names := cfg.modelNames()
-	data := make([]map[string]string, 0, len(names))
-	for _, name := range names {
-		data = append(data, map[string]string{
-			"id":       name,
-			"object":   "model",
-			"created":  "0",
-			"owned_by": "bifrost",
-		})
-	}
-	writeJSON(w, 200, map[string]any{"object": "list", "data": data})
+	writeJSON(w, 200, map[string]any{"object": "list", "data": cfg.modelCatalog()})
 }
 
 // handleOpenAIChat is a pass-through: it decodes the body as a generic JSON

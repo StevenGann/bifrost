@@ -368,6 +368,7 @@ func main() {
 
 	// OpenAI-compatible API (same as Ollama's /v1)
 	mux.HandleFunc("GET /v1/models", func(w http.ResponseWriter, r *http.Request) { handleOpenAIModels(w, cfg) })
+	mux.HandleFunc("GET /v1/models/{name}", func(w http.ResponseWriter, r *http.Request) { handleOpenAIModelDetail(w, r, cfg) })
 	mux.HandleFunc("POST /v1/chat/completions", governor.Wrap(func(w http.ResponseWriter, r *http.Request) { handleOpenAIChat(w, r, cfg) }))
 	mux.HandleFunc("POST /v1/embeddings", governor.Wrap(func(w http.ResponseWriter, r *http.Request) { handleOpenAIEmbeddings(w, r, cfg) }))
 
