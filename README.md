@@ -60,6 +60,10 @@ Bifrost routes client-facing model names to one or more upstream backends.
 | `CIRCUIT_THRESHOLD` | Consecutive failures before a backend's circuit opens (default `3`) |
 | `CIRCUIT_COOLDOWN` | Seconds before a half-open probe is attempted (default `30`) |
 | `HEALTH_INTERVAL` | Seconds between backend health polls (default `15`; `0` disables) |
+| `INDEX_FILE` | Path to persist the retrieval index as JSON (default `` — in-memory only) |
+| `CHUNK_SIZE` | Max chars per ingested document chunk (default `1000`) |
+| `CHUNK_OVERLAP` | Chunk overlap in chars (default `100`) |
+| `RETRIEVE_K` | Top-k chunks retrieved for RAG (default `3`) |
 
 ```bash
 BACKENDS='[{"name":"deepseek","base_url":"https://api.deepseek.com","api_key_env":"UPSTREAM_API_KEY"}]'
@@ -167,12 +171,32 @@ holds an embedding model — add a `ROUTES` entry (e.g.
 `embed → epsilon/nomic-embed-text`) pointing at a local model. Bifrost translates
 between the Ollama-native and OpenAI embedding shapes.
 
+## Retrieval (RAG)
+
+Bifrost doubles as a small private retrieval engine. Ingest documents (chunked
+then embedded via `EMBED_MODEL`), then let `private:*` models answer from them:
+
+- `POST /api/documents` — ingest `{"documents":[{"name","text"},…]}`; each is
+  chunked (`CHUNK_SIZE`/`CHUNK_OVERLAP`), embedded, and stored in an in-memory
+  vector index (linear-scan top-k — sized for a homelab, no ANN needed).
+- `POST /api/retrieve` — `{"query","k"}` returns top-k chunks with cosine scores.
+
+When a request targets a `private:*` model **and** the index is non-empty,
+Bifrost automatically retrieves the top-`RETRIEVE_K` chunks for the query and
+injects them as a system message, grounding the answer in your documents. It is
+a silent no-op while the index is empty or the embedding backend is unreachable,
+so a cold or degraded Bifrost behaves exactly like before. The index is persisted
+to `INDEX_FILE` when set (opt-in; empty means in-memory only). Exposed as
+`bifrost_index_chunks`.
+
 ## API surface
 
 - `GET /api/tags` — model list (Ollama format)
 - `POST /api/chat` — chat, streaming or not (Ollama format)
 - `POST /api/generate` — completion (Ollama format)
 - `POST /api/embeddings` / `POST /api/embed` — embeddings (Ollama format)
+- `POST /api/documents` — ingest documents into the retrieval index
+- `POST /api/retrieve` — retrieve top-k chunks for a query
 - `GET /api/version` — `0.1.0-bifrost`
 - `GET /v1/models` — model list (OpenAI format)
 - `POST /v1/chat/completions` — passthrough (OpenAI format)

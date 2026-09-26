@@ -17,5 +17,6 @@ func TestMain(m *testing.M) {
 	circuits = newCircuits(1000, time.Hour)
 	health = &backendHealth{m: map[string]bool{}}
 	semanticCache = newSemanticCache(0, 0, 0.92)
+	docIndex = newVectorIndex(0)
 	os.Exit(m.Run())
 }

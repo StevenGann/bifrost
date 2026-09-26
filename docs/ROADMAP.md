@@ -49,13 +49,17 @@ below turns it into a bridge with a real decision layer.
   the first request after an outage fails over instantly instead of paying the
   retry cost. On recovery it half-opens to re-admit traffic. Exposed as
   `bifrost_backend_healthy` per backend.
-- **Semantic caching (v0.13):** opt-in near-neighbor cache — prompts are
-  embedded via the local embedding brain and a *similar* cached response is
+- **Semantic caching (v0.13):** opt-in near-neighbor response cache — prompts
+  are embedded via the local embedding brain and a *similar* cached response is
   served when cosine similarity clears `SEMANTIC_THRESHOLD`. First real use of
   the local embeddings: a reworded question hits cache instead of upstream.
   Degrades gracefully when the embedding backend is down.
+- **Retrieval / RAG (v0.14):** a small private retrieval engine — ingest
+  documents, retrieve top-k chunks, and `private:*` models are automatically
+  grounded in the index. First real use of the local *chat* model: it answers
+  questions from your own documents.
 - Single static binary, stdlib-only, deployed on Hyperion at `bifrost.lab:11434`;
-  the only state is an optional spend ledger file.
+  the only state is an optional spend ledger and retrieval index (both opt-in files).
 
 ## Initiatives (priority order)
 
@@ -95,15 +99,15 @@ the LAN — emails, phones, card numbers, SSNs, IPs, API/SSH keys, PEM private
 keys. Local backends are auto-detected (loopback/RFC1918/`.lab`) and skip
 redaction.
 
-### 5. Caching — ✅ exact-match shipped (v0.8); semantic ⬜
+### 5. Caching — ✅ shipped (v0.8 exact-match; v0.13 semantic)
 
 Exact-match response caching: identical requests (retries, idempotent agent
 re-sends) skip the upstream call entirely — zero cost, zero latency. Bounded LRU
 with TTL (`CACHE_TTL`/`CACHE_MAX`), in-memory only (never persisted — responses
 can echo request PII), non-streaming only (like retry/fallback).
 `bifrost_cache_hits_total` + `bifrost_cache_misses_total`, plus a hit-rate on the
-dashboard. Semantic caching still builds on #3 (embeddings) and remains future
-work.
+dashboard. Semantic caching (v0.13) extends this to *similar* requests via
+embeddings, tracked as `bifrost_semantic_cache_hits_total`/`..._misses_total`.
 
 ### 6. Resilience: retry + fallback — ✅ shipped (v0.6)
 
@@ -129,15 +133,17 @@ deploy keys when per-app budgets need to be trusted).
 tier — so an app can ask "what's available and what's right for me" instead of
 hardcoding a model.
 
-### 9. Retrieval endpoint ⬜ *(stretch)*
+### 9. Retrieval / RAG — ✅ shipped (v0.14)
 
-`/v1/retrieval` — embeddings + vector search over the vault, so agents get
-semantic search without each reimplementing it.
+`POST /api/documents` ingests documents (chunk → embed → store in a small
+in-memory linear-scan index); `POST /api/retrieve` returns top-k chunks; and
+`private:*` chat is automatically grounded in the index. This makes the local
+chat model useful for the first time — private Q&A over your own documents.
 
 ## Non-goals
 
 - **A model runner** — vLLM/llama.cpp already own that.
 - **A training pipeline.**
-- **A full vector database** — delegate to an existing store rather than embed one.
+- **A full vector database** — retrieval uses a small in-memory linear-scan index (homelab scale); a real ANN store stays out of scope.
 
 Bifrost stays thin: its value is the *decision layer*, not the compute.
