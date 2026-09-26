@@ -40,6 +40,8 @@ type Config struct {
 	AppKeys    map[string]string
 	RateLimit  int
 	LedgerFile string
+	CacheTTL   int
+	CacheMax   int
 }
 
 // metrics is the package-level collector. It is initialized to a working
@@ -157,6 +159,8 @@ func loadConfig() Config {
 		AppKeys:    map[string]string{},
 		RateLimit:  envInt("RATE_LIMIT", 0),
 		LedgerFile: envOr("LEDGER_FILE", ""),
+		CacheTTL:   envInt("CACHE_TTL", 300),
+		CacheMax:   envInt("CACHE_MAX", 256),
 	}
 
 	// Multi-backend config: BACKENDS=[...] + ROUTES={"client":"backend/model"}.
@@ -301,6 +305,7 @@ func main() {
 	cfg := loadConfig()
 	metrics = newMetrics(loadPricing())
 	governor = newGovernor(cfg)
+	lruCache = newCacheFromConfig(cfg.CacheTTL, cfg.CacheMax)
 
 	mux := http.NewServeMux()
 

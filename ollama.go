@@ -162,8 +162,8 @@ func handleChat(w http.ResponseWriter, r *http.Request, cfg Config) {
 		return
 	}
 
-	// Non-streaming: retry transient failures and fall back through FALLBACKS.
-	resp, _, status, err := cfg.complete(clientModel, app, "/api/chat", func(up string) OpenAIRequest {
+	// Non-streaming: retry + fallback, fronted by an exact-match response cache.
+	resp, _, status, err := cfg.completeCached(cacheKey("/api/chat", req), clientModel, app, "/api/chat", func(up string) OpenAIRequest {
 		return toOpenAIRequest(up, req.Messages, req.Format, req.Options.Temperature, req.Options.TopP, req.Options.NumPredict)
 	})
 	if err != nil {
@@ -225,8 +225,8 @@ func handleGenerate(w http.ResponseWriter, r *http.Request, cfg Config) {
 		return
 	}
 
-	// Non-streaming: retry + fallback.
-	resp, _, status, err := cfg.complete(clientModel, app, "/api/generate", func(up string) OpenAIRequest {
+	// Non-streaming: retry + fallback, fronted by an exact-match response cache.
+	resp, _, status, err := cfg.completeCached(cacheKey("/api/generate", req), clientModel, app, "/api/generate", func(up string) OpenAIRequest {
 		return toOpenAIRequest(up, messages, req.Format, req.Options.Temperature, req.Options.TopP, req.Options.NumPredict)
 	})
 	if err != nil {

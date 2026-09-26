@@ -28,6 +28,9 @@ below turns it into a bridge with a real decision layer.
   auth (`APP_KEYS`) — backed by a durable JSONL spend ledger (`LEDGER_FILE`) so
   budgets survive restarts. Over budget → `402`, rate-limited → `429`,
   unauthenticated → `401`.
+- **Caching (v0.8):** exact-match response caching — identical requests (retries,
+  idempotent re-sends) skip the upstream call entirely (zero cost, zero latency).
+  Bounded LRU + TTL, in-memory only; hit-rate surfaced on the dashboard.
 - Single static binary, stdlib-only, deployed on Hyperion at `bifrost.lab:11434`;
   the only state is an optional spend ledger file.
 
@@ -66,11 +69,15 @@ the LAN — emails, phones, card numbers, SSNs, IPs, API/SSH keys, PEM private
 keys. Local backends are auto-detected (loopback/RFC1918/`.lab`) and skip
 redaction.
 
-### 5. Caching ⬜
+### 5. Caching — ✅ exact-match shipped (v0.8); semantic ⬜
 
-Exact + semantic prompt caching. Agents re-send a lot of near-identical context
-every turn; caching that saves tokens and latency. Semantic caching builds on #3
-(needs embeddings) and could cut 20–40% off agent-traffic cost.
+Exact-match response caching: identical requests (retries, idempotent agent
+re-sends) skip the upstream call entirely — zero cost, zero latency. Bounded LRU
+with TTL (`CACHE_TTL`/`CACHE_MAX`), in-memory only (never persisted — responses
+can echo request PII), non-streaming only (like retry/fallback).
+`bifrost_cache_hits_total` + `bifrost_cache_misses_total`, plus a hit-rate on the
+dashboard. Semantic caching still builds on #3 (embeddings) and remains future
+work.
 
 ### 6. Resilience: retry + fallback — ✅ shipped (v0.6)
 

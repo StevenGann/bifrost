@@ -52,6 +52,8 @@ Bifrost routes client-facing model names to one or more upstream backends.
 | `RATE_LIMIT` | Per-app requests/minute (default `0` = unlimited) — exceeded → `429` |
 | `APP_KEYS` | JSON `{"app":"bearer-key"}` — when set, requires a valid key (else `401`) |
 | `LEDGER_FILE` | Path to the JSONL spend ledger (e.g. `/data/spend.jsonl`) |
+| `CACHE_TTL` | Exact-match cache TTL in seconds (default `300`; `0` disables) |
+| `CACHE_MAX` | Max cached entries (default `256`) |
 
 ```bash
 BACKENDS='[{"name":"deepseek","base_url":"https://api.deepseek.com","api_key_env":"UPSTREAM_API_KEY"}]'
@@ -120,6 +122,14 @@ Over budget → `402`, rate-limited → `429`, unauthenticated → `401`.
 Without `APP_KEYS`, the `X-Bifrost-App` header still identifies callers for
 metrics — but it is self-reported (any client can claim to be any app). Deploy
 `APP_KEYS` when per-app budgets need to be authoritative.
+
+## Caching
+
+Identical non-streaming requests (retries, idempotent agent re-sends) are served
+from an in-memory exact-match cache, skipping the upstream call entirely — zero
+cost, zero latency. Bounded LRU with TTL (`CACHE_TTL`/`CACHE_MAX`). Never
+persisted (cached responses can echo request PII). `bifrost_cache_hits_total` /
+`bifrost_cache_misses_total` in `/metrics`, hit-rate on the dashboard.
 
 ## API surface
 

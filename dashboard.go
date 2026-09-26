@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"html/template"
 	"net/http"
 	"sort"
@@ -9,26 +10,31 @@ import (
 )
 
 type dashboardRow struct {
-	Model     string
-	App       string
-	Requests  uint64
-	TokensIn  uint64
-	TokensOut uint64
-	CostUSD   float64
-	AvgLatMs  float64
-	Errors    uint64
-	Retries   uint64
-	Fallbacks uint64
+	Model       string
+	App         string
+	Requests    uint64
+	TokensIn    uint64
+	TokensOut   uint64
+	CostUSD     float64
+	AvgLatMs    float64
+	Errors      uint64
+	Retries     uint64
+	Fallbacks   uint64
+	CacheHits   uint64
+	CacheMisses uint64
 }
 
 type dashboardData struct {
-	Rows           []dashboardRow
-	Recent         []requestRecord
-	TotalRequests  uint64
-	TotalTokensIn  uint64
-	TotalTokensOut uint64
-	TotalCostUSD   float64
-	Uptime         string
+	Rows             []dashboardRow
+	Recent           []requestRecord
+	TotalRequests    uint64
+	TotalTokensIn    uint64
+	TotalTokensOut   uint64
+	TotalCostUSD     float64
+	TotalCacheHits   uint64
+	TotalCacheMisses uint64
+	CacheHitRate     string
+	Uptime           string
 }
 
 // dashboardData builds a snapshot of the metrics for rendering. Called with the
@@ -64,23 +70,33 @@ func (m *Metrics) dashboardData() dashboardData {
 		}
 
 		d.Rows = append(d.Rows, dashboardRow{
-			Model:     model,
-			App:       app,
-			Requests:  reqs,
-			TokensIn:  m.tokensIn[k],
-			TokensOut: m.tokensOut[k],
-			CostUSD:   m.costUSD[k],
-			Errors:    errs,
-			AvgLatMs:  avgMs,
-			Retries:   m.retries[k],
-			Fallbacks: m.fallbacks[k],
+			Model:       model,
+			App:         app,
+			Requests:    reqs,
+			TokensIn:    m.tokensIn[k],
+			TokensOut:   m.tokensOut[k],
+			CostUSD:     m.costUSD[k],
+			Errors:      errs,
+			AvgLatMs:    avgMs,
+			Retries:     m.retries[k],
+			Fallbacks:   m.fallbacks[k],
+			CacheHits:   m.cacheHits[k],
+			CacheMisses: m.cacheMisses[k],
 		})
 		d.TotalRequests += reqs
 		d.TotalTokensIn += m.tokensIn[k]
 		d.TotalTokensOut += m.tokensOut[k]
 		d.TotalCostUSD += m.costUSD[k]
+		d.TotalCacheHits += m.cacheHits[k]
+		d.TotalCacheMisses += m.cacheMisses[k]
 	}
 	sort.Slice(d.Rows, func(i, j int) bool { return d.Rows[i].CostUSD > d.Rows[j].CostUSD })
+
+	if total := d.TotalCacheHits + d.TotalCacheMisses; total > 0 {
+		d.CacheHitRate = fmt.Sprintf("%.0f%%", float64(d.TotalCacheHits)/float64(total)*100)
+	} else {
+		d.CacheHitRate = "—"
+	}
 
 	d.Recent = make([]requestRecord, len(m.recent))
 	for i := range m.recent {
@@ -133,17 +149,19 @@ a{color:#7fd4ff}
   <div class="total"><div class="v">{{.TotalRequests}}</div><div class="l">requests</div></div>
   <div class="total"><div class="v">{{.TotalTokensIn}}</div><div class="l">tokens in</div></div>
   <div class="total"><div class="v">{{.TotalTokensOut}}</div><div class="l">tokens out</div></div>
+  <div class="total"><div class="v">{{.TotalCacheHits}}</div><div class="l">cache hits</div></div>
+  <div class="total"><div class="v">{{.CacheHitRate}}</div><div class="l">cache hit rate</div></div>
   <div class="total"><div class="v">{{.Uptime}}</div><div class="l">uptime</div></div>
 </div>
 
 <h2>By model / app</h2>
 <table>
-<tr><th>model</th><th>app</th><th>requests</th><th>tokens in</th><th>tokens out</th><th>cost</th><th>avg latency</th><th>errors</th><th>retries</th><th>fallbacks</th></tr>
+<tr><th>model</th><th>app</th><th>requests</th><th>tokens in</th><th>tokens out</th><th>cost</th><th>avg latency</th><th>errors</th><th>retries</th><th>fallbacks</th><th>cache h/m</th></tr>
 {{range .Rows}}<tr>
 <td class="mono">{{.Model}}</td><td>{{.App}}</td><td>{{.Requests}}</td><td>{{.TokensIn}}</td><td>{{.TokensOut}}</td>
 <td class="mono">${{printf "%.6f" .CostUSD}}</td><td class="mono">{{printf "%.0f" .AvgLatMs}} ms</td>
 <td class="{{if .Errors}}err{{end}}">{{.Errors}}</td>
-<td>{{.Retries}}</td><td>{{.Fallbacks}}</td>
+<td>{{.Retries}}</td><td>{{.Fallbacks}}</td><td>{{.CacheHits}}/{{.CacheMisses}}</td>
 </tr>{{end}}
 </table>
 
