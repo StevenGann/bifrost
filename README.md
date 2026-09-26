@@ -54,6 +54,8 @@ Bifrost routes client-facing model names to one or more upstream backends.
 | `LEDGER_FILE` | Path to the JSONL spend ledger (e.g. `/data/spend.jsonl`) |
 | `CACHE_TTL` | Exact-match cache TTL in seconds (default `300`; `0` disables) |
 | `CACHE_MAX` | Max cached entries (default `256`) |
+| `CIRCUIT_THRESHOLD` | Consecutive failures before a backend's circuit opens (default `3`) |
+| `CIRCUIT_COOLDOWN` | Seconds before a half-open probe is attempted (default `30`) |
 
 ```bash
 BACKENDS='[{"name":"deepseek","base_url":"https://api.deepseek.com","api_key_env":"UPSTREAM_API_KEY"}]'
@@ -111,6 +113,12 @@ Non-streaming completions retry transient failures (network, `429`, `5xx`) with
 exponential backoff (`RETRIES`) and fall back through a model chain (`FALLBACKS`)
 when the primary fails for good. Streaming and `/v1` passthrough stay
 single-attempt — retrying a half-flushed stream would corrupt the client.
+
+Each backend also gets a circuit breaker: after `CIRCUIT_THRESHOLD` consecutive
+failures it opens, so requests fail fast (503) instead of hanging on a downed
+backend — essential for itinerant local workers (e.g. Epsilon) that come and go.
+After `CIRCUIT_COOLDOWN` it half-opens to admit a probe and re-close on success.
+Surfaced as `bifrost_circuit_trips_total` + `bifrost_circuit_open`.
 
 ## Governance
 

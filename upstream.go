@@ -112,7 +112,7 @@ func streamChat(b Backend, oreq OpenAIRequest, onChunk func(content string) erro
 	if err != nil {
 		return err
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := do(b, req)
 	if err != nil {
 		return err
 	}
@@ -166,9 +166,9 @@ func chat(b Backend, oreq OpenAIRequest) (*OpenAIChatResponse, Usage, error) {
 	if err != nil {
 		return nil, Usage{}, err
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := do(b, req)
 	if err != nil {
-		return nil, Usage{}, &upstreamError{0, err.Error()}
+		return nil, Usage{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -206,7 +206,7 @@ func forwardRaw(b Backend, path string, body []byte, w http.ResponseWriter, usag
 	if err != nil {
 		return 0, err
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := do(b, req)
 	if err != nil {
 		return 0, err
 	}

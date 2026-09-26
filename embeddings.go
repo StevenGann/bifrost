@@ -37,9 +37,9 @@ func embed(b Backend, model, input string) ([]float64, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := do(b, req)
 	if err != nil {
-		return nil, &upstreamError{0, err.Error()}
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {

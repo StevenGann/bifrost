@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Backend is an upstream LLM endpoint Bifrost can route to.
@@ -29,19 +30,21 @@ type Route struct {
 }
 
 type Config struct {
-	Port       string
-	Backends   map[string]Backend
-	Default    string
-	Routes     map[string]Route
-	Retries    int
-	Fallbacks  map[string]string
-	Budget     float64
-	AppBudgets map[string]float64
-	AppKeys    map[string]string
-	RateLimit  int
-	LedgerFile string
-	CacheTTL   int
-	CacheMax   int
+	Port             string
+	Backends         map[string]Backend
+	Default          string
+	Routes           map[string]Route
+	Retries          int
+	Fallbacks        map[string]string
+	Budget           float64
+	AppBudgets       map[string]float64
+	AppKeys          map[string]string
+	RateLimit        int
+	LedgerFile       string
+	CacheTTL         int
+	CacheMax         int
+	CircuitThreshold int
+	CircuitCooldown  int
 }
 
 // metrics is the package-level collector. It is initialized to a working
@@ -149,18 +152,20 @@ func parseModels(s, backend string) []Route {
 
 func loadConfig() Config {
 	cfg := Config{
-		Port:       envOr("PORT", "11434"),
-		Backends:   map[string]Backend{},
-		Routes:     map[string]Route{},
-		Retries:    envInt("RETRIES", 2),
-		Fallbacks:  map[string]string{},
-		Budget:     envFloat("BUDGET", 0),
-		AppBudgets: map[string]float64{},
-		AppKeys:    map[string]string{},
-		RateLimit:  envInt("RATE_LIMIT", 0),
-		LedgerFile: envOr("LEDGER_FILE", ""),
-		CacheTTL:   envInt("CACHE_TTL", 300),
-		CacheMax:   envInt("CACHE_MAX", 256),
+		Port:             envOr("PORT", "11434"),
+		Backends:         map[string]Backend{},
+		Routes:           map[string]Route{},
+		Retries:          envInt("RETRIES", 2),
+		Fallbacks:        map[string]string{},
+		Budget:           envFloat("BUDGET", 0),
+		AppBudgets:       map[string]float64{},
+		AppKeys:          map[string]string{},
+		RateLimit:        envInt("RATE_LIMIT", 0),
+		LedgerFile:       envOr("LEDGER_FILE", ""),
+		CacheTTL:         envInt("CACHE_TTL", 300),
+		CacheMax:         envInt("CACHE_MAX", 256),
+		CircuitThreshold: envInt("CIRCUIT_THRESHOLD", 3),
+		CircuitCooldown:  envInt("CIRCUIT_COOLDOWN", 30),
 	}
 
 	// Multi-backend config: BACKENDS=[...] + ROUTES={"client":"backend/model"}.
@@ -306,6 +311,7 @@ func main() {
 	metrics = newMetrics(loadPricing())
 	governor = newGovernor(cfg)
 	lruCache = newCacheFromConfig(cfg.CacheTTL, cfg.CacheMax)
+	circuits = newCircuits(cfg.CircuitThreshold, time.Duration(cfg.CircuitCooldown)*time.Second)
 
 	mux := http.NewServeMux()
 

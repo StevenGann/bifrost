@@ -34,6 +34,10 @@ below turns it into a bridge with a real decision layer.
 - **Embeddings (v0.9):** Ollama-native + OpenAI-compatible embeddings endpoints,
   routed to any backend holding an embedding model (e.g. Epsilon's
   `nomic-embed-text`). Upstream calls standardized on `/v1/*` paths.
+- **Circuit breaker (v0.10):** per-backend breaker — after `CIRCUIT_THRESHOLD`
+  consecutive failures, fail fast (503) instead of hanging on a downed backend;
+  a half-open probe after `CIRCUIT_COOLDOWN` re-closes on recovery. Makes the
+  nomadic local backend degrade gracefully while it's offline.
 - Single static binary, stdlib-only, deployed on Hyperion at `bifrost.lab:11434`;
   the only state is an optional spend ledger file.
 
