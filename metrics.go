@@ -86,6 +86,7 @@ type Metrics struct {
 	latency      map[string]*histogram // "model|app"
 	retries      map[string]uint64     // "model|app"
 	fallbacks    map[string]uint64     // "model|app"
+	keyRotations map[string]uint64     // "backend"
 	cacheHits    map[string]uint64     // "model|app"
 	cacheMisses  map[string]uint64     // "model|app"
 	semanticHits map[string]uint64     // "model|app"
@@ -106,6 +107,7 @@ func newMetrics(p map[string]pricing) *Metrics {
 		latency:      map[string]*histogram{},
 		retries:      map[string]uint64{},
 		fallbacks:    map[string]uint64{},
+		keyRotations: map[string]uint64{},
 		cacheHits:    map[string]uint64{},
 		cacheMisses:  map[string]uint64{},
 		semanticHits: map[string]uint64{},
@@ -175,6 +177,13 @@ func (m *Metrics) RecordFallbacks(model, app string, n int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.fallbacks[model+"|"+app] += uint64(n)
+}
+
+// RecordKeyRotation increments the key-rotation counter for a backend.
+func (m *Metrics) RecordKeyRotation(backend string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.keyRotations[backend]++
 }
 
 // RecordCacheHit/Miss increment the exact-match cache counters for a model+app.
@@ -292,6 +301,12 @@ func (m *Metrics) writeLocked(w io.Writer) {
 	for _, k := range sortedKeys(m.fallbacks) {
 		p := strings.SplitN(k, "|", 2)
 		fmt.Fprintf(w, "bifrost_fallbacks_total{model=%q,app=%q} %d\n", p[0], p[1], m.fallbacks[k])
+	}
+
+	fmt.Fprintf(w, "# HELP bifrost_key_rotations_total Key rotations across a backend's key pool.\n")
+	fmt.Fprintf(w, "# TYPE bifrost_key_rotations_total counter\n")
+	for _, k := range sortedKeys(m.keyRotations) {
+		fmt.Fprintf(w, "bifrost_key_rotations_total{backend=%q} %d\n", k, m.keyRotations[k])
 	}
 
 	fmt.Fprintf(w, "# HELP bifrost_cache_hits_total Responses served from the exact-match cache.\n")

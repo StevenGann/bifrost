@@ -20,6 +20,7 @@ type Backend struct {
 	BaseURL string
 	APIKey  string
 	Local   bool // true when the backend is on the LAN (skip PII redaction)
+	Keys    []apiKey
 }
 
 // Route maps a client-facing model name to a backend + upstream model name.
@@ -234,6 +235,19 @@ func loadConfig() Config {
 		}
 	}
 
+	if raw := os.Getenv("KEYPOOL"); raw != "" {
+		var pool map[string][]apiKey
+		if err := json.Unmarshal([]byte(raw), &pool); err != nil {
+			log.Printf("WARNING: ignoring malformed KEYPOOL: %v", err)
+		} else {
+			for name, keys := range pool {
+				if b, ok := cfg.Backends[name]; ok {
+					b.Keys = keys
+					cfg.Backends[name] = b
+				}
+			}
+		}
+	}
 	if raw := os.Getenv("FALLBACKS"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &cfg.Fallbacks); err != nil {
 			log.Printf("WARNING: ignoring malformed FALLBACKS: %v", err)

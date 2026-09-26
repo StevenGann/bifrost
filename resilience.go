@@ -101,12 +101,33 @@ func (c Config) resolve(clientModel string, attempt attemptFn) (err error, lastU
 		}
 		lastUpstream = up
 
+		// Select the first key for this backend (no-op for single-key backends).
+		keyID := ""
+		if len(b.Keys) > 0 {
+			if k, ok := keyRings.pick(b.Name, b.Keys); ok {
+				b.APIKey = k.Key
+				keyID = k.ID
+			}
+		}
+
 		err, committed := attempt(b, up)
 		hop := 0
 		for err != nil && !committed && transient(err) && hop < c.Retries {
 			time.Sleep(backoffBase * time.Duration(1<<uint(hop)))
 			hop++
 			retries++
+			// A rate-limited/auth-rejected key is cooled and the retry rotates to
+			// the next key in the pool before backend failover ever applies.
+			if len(b.Keys) > 0 {
+				if keyID != "" && keyRateLimited(err) {
+					keyRings.markCooling(b.Name, keyID)
+				}
+				if k, ok := keyRings.pick(b.Name, b.Keys); ok {
+					b.APIKey = k.Key
+					keyID = k.ID
+					metrics.RecordKeyRotation(b.Name)
+				}
+			}
 			err, committed = attempt(b, up)
 		}
 		lastErr = err

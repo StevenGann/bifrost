@@ -60,6 +60,7 @@ Bifrost routes client-facing model names to one or more upstream backends.
 | `CIRCUIT_THRESHOLD` | Consecutive failures before a backend's circuit opens (default `3`) |
 | `CIRCUIT_COOLDOWN` | Seconds before a half-open probe is attempted (default `30`) |
 | `HEALTH_INTERVAL` | Seconds between backend health polls (default `15`; `0` disables) |
+| `KEYPOOL` | JSON map of backend → key list for multi-key rotation (default `` — single key via `api_key_env`) |
 
 ```bash
 BACKENDS='[{"name":"deepseek","base_url":"https://api.deepseek.com","api_key_env":"UPSTREAM_API_KEY"}]'
@@ -69,6 +70,27 @@ ROUTES='{"coach":"deepseek/deepseek-v4-flash","deepseek-v4-flash":"deepseek/deep
 `api_key_env` names an env var holding the backend's bearer key (keeps secrets
 out of the config). The **first** backend in `BACKENDS` is the default — unknown
 model names route to it unchanged.
+
+### Key pool
+
+A backend can hold **many** keys instead of one. Point `KEYPOOL` at a JSON map
+of backend name → key list (from a Secret — keys never live in a ConfigMap or
+the repo):
+
+```json
+{"deepseek": [
+  {"id": "ds-offpeak", "key": "sk-…", "plan": "off-peak", "weight": 1},
+  {"id": "ds-work",    "key": "sk-…", "plan": "work",    "weight": 2}
+]}
+```
+
+Bifrost then **juggles** them per request: weighted round-robin selection, and
+when a key is rate-limited (`429`) or rejected (`401`/`403`) it is cooled for a
+bit while the retry transparently rotates to the next key — before backend
+failover ever applies. `weight` (default `1`) spends one key more than another;
+`id`/`plan` are labels for observability. With no `KEYPOOL`, the single
+`api_key_env` key is used unchanged. Tracked as
+`bifrost_key_rotations_total{backend}`.
 
 ### Single upstream (legacy)
 

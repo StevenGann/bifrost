@@ -57,6 +57,10 @@ below turns it into a bridge with a real decision layer.
 - **Model catalog (v0.15):** `/v1/models` (and `/v1/models/{name}`) return each
   model's privacy tier, backend, upstream model, capabilities, and per-1M-token
   pricing — agents can discover and pick instead of hardcoding model names.
+- **Key pool (v0.16):** a backend can hold many keys; Bifrost rotates across
+  them (weighted round-robin) and transparently fails over to the next key on a
+  `429`/`401`/`403`, cooling the rate-limited key before backend failover
+  applies. Tracked as `bifrost_key_rotations_total`.
 - Single static binary, stdlib-only, deployed on Hyperion at `bifrost.lab:11434`;
   the only state is an optional spend ledger file.
 
@@ -138,6 +142,14 @@ to the same privacy tier for Ollama clients.
 
 `/v1/retrieval` — embeddings + vector search over the vault, so agents get
 semantic search without each reimplementing it.
+
+### 10. Key pool — ✅ shipped (v0.16)
+
+A backend can hold many keys (different billing plans, rate-limit buckets).
+Bifrost rotates across them (weighted round-robin) and, on a `429`/`401`/`403`,
+cools the offending key and transparently retries the next one — before backend
+failover applies. Keys live in a SOPS-encrypted Secret (`KEYPOOL`), never in a
+ConfigMap or the repo. Per-key cost/plan accounting is a follow-up.
 
 ## Non-goals
 
