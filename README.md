@@ -127,7 +127,10 @@ feature that doesn't serve one of these is scope, not progress.
   cache hits, retries, fallbacks and key rotations.
 - **Live dashboard** — `/dashboard` updates in place from `/dashboard.json`
   every two seconds: no reloads, no dropped scroll position, and it re-lays-out
-  as labelled cards on a phone.
+  as labelled cards on a phone. Totals are month-to-date and are rebuilt from
+  the ledger at start-up, so restarting the process does not make the month's
+  spend appear to vanish. Prometheus counters stay process-scoped, which is what
+  `rate()` expects.
 
 ### Caching
 
