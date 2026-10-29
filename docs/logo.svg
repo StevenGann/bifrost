@@ -11,7 +11,7 @@
   </defs>
   <!-- Deck: full bleed, so the crossing continues past the frame instead of
        being a bar that sits under a shape. -->
-  <rect x="0" y="42" width="64" height="7" fill="#5c6c81"/>
+  <rect x="0" y="43" width="64" height="6" fill="#5c6c81"/>
   <!-- Span: wide and low, heavy at the feet and thinner at the crown the way a
        loaded arch is. The feet run down to y=46, inside the deck, so they read
        as abutments rather than resting on a line. -->

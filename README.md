@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.svg" width="80" height="80" alt="Bifrost — the rainbow bridge">
+  <img src="docs/logo.svg" width="96" height="96" alt="Bifrost — the rainbow bridge">
 </p>
 
 <h1 align="center">Bifrost</h1>
