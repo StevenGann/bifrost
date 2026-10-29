@@ -16,7 +16,7 @@ flowchart LR
         A["Agents / scripts"]
     end
 
-    B["Bifrost<br/>route · redact · retry<br/>meter · cache · juggle keys"]
+    B["Bifrost<br/>route · redact · retry<br/>meter · cache · keys"]
 
     subgraph Upstreams[Upstreams]
         C["Cloud LLM<br/>(DeepSeek, Claude, …)"]
@@ -28,10 +28,10 @@ flowchart LR
     O --> B
     V --> B
     A --> B
-    B -->|"coach → deepseek/deepseek-v4-flash"| C
-    B -->|"private: models → local only"| L
+    B -->|"coach → cloud model"| C
+    B -->|"private: → local only"| L
     B -->|"embed → local"| E
-    B -->|"tts → elevenlabs"| S
+    B -->|"tts → voice"| S
     B --> M["Prometheus /metrics"]
 ```
 
