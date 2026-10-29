@@ -173,7 +173,7 @@ table:
 
 ```bash
 docker run -d --name bifrost -p 11434:11434 \
-  -e BACKENDS='[{"name":"cloud","base_url":"https://api.deepseek.com","api_key_env":"CLOUD_KEY"},{"name":"local","base_url":"http://[REDACTED]:11434","local":true}]' \
+  -e BACKENDS='[{"name":"cloud","base_url":"https://api.deepseek.com","api_key_env":"CLOUD_KEY"},{"name":"local","base_url":"http://192.0.2.10:11434","local":true}]' \
   -e ROUTES='{"coach":"cloud/deepseek-v4-flash","private:qwen":"local/qwen3-14b","embed":"local/nomic-embed-text"}' \
   -e FALLBACKS='{"coach":"private:qwen"}' \
   -e CLOUD_KEY=sk-... \
