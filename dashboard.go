@@ -413,10 +413,10 @@ a{color:#7fd4ff}
     var H = W < 520 ? 520 : 400;
     // Budget the margins from the longest label rather than guessing: the
     // value sits beside the name, so a long backend name must not clip.
-    var CH = 7.3, VAL = 46, PAD = 14;
+    var CH = 8.3, VAL = 58, PAD = 14;
     var M = {
-      left: Math.min(240, PAD + (d3.max(clients, function (c) { return c.length; }) || 0) * CH + VAL),
-      right: Math.min(260, PAD + (d3.max(ups, function (u) { return u.length; }) || 0) * CH + VAL),
+      left: Math.min(280, PAD + (d3.max(clients, function (c) { return c.length; }) || 0) * CH + VAL),
+      right: Math.min(300, PAD + (d3.max(ups, function (u) { return u.length; }) || 0) * CH + VAL),
       top: 14, bottom: 14
     };
 
@@ -473,14 +473,18 @@ a{color:#7fd4ff}
       .attr("width", function (d) { return d.x1 - d.x0; })
       .attr("height", function (d) { return Math.max(1, d.y1 - d.y0); })
       .attr("rx", 1.5)
-      .attr("fill", function (d) { return d.side === "client" ? color(d.name) : "#5d6f80"; });
+      .attr("fill", function (d) { return d.side === "client" ? color(d.name) : "#5d6f80"; })
+      .append("title")
+      .text(function (d) { return d.name; });
 
     var label = g.append("text")
       .attr("x", function (d) { return d.side === "client" ? d.x0 - 8 : d.x1 + 8; })
       .attr("y", function (d) { return (d.y0 + d.y1) / 2; })
       .attr("dy", "0.35em")
       .attr("text-anchor", function (d) { return d.side === "client" ? "end" : "start"; });
-    label.append("tspan").text(function (d) { return d.name; });
+    // A very long backend name would either clip or squeeze the chart; shorten
+    // it on the canvas and keep the full name in the tooltip.
+    label.append("tspan").text(function (d) { return d.name.length > 26 ? d.name.slice(0, 25) + "\u2026" : d.name; });
     label.append("tspan")
       .attr("class", "val")
       .attr("dx", 6)
