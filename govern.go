@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -89,6 +90,7 @@ type Governor struct {
 	// static keys so existing deployments keep working.
 	store      *keyStore
 	storeErr   error
+	loadErr    error
 	adminKey   string
 	anon       string // "open", "limited" or "closed"
 	anonRate   int
@@ -145,7 +147,10 @@ func (g *Governor) load() {
 	}
 	f, err := os.Open(g.path)
 	if err != nil {
-		return // no ledger yet
+		if !errors.Is(err, os.ErrNotExist) {
+			g.loadErr = err
+		}
+		return
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)

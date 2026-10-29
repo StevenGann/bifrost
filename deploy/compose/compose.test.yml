@@ -1,0 +1,47 @@
+# Compose file used by scripts/portability-test.sh and CI. Not for humans:
+# it replaces the model backend with a local stub so the test needs no API key
+# and no network beyond the compose network.
+#
+#   BIFROST_IMAGE=ghcr.io/.../bifrost:sha docker compose -f compose.test.yml up -d --wait
+
+services:
+  bifrost:
+    image: ${BIFROST_IMAGE:?set BIFROST_IMAGE}
+    ports:
+      - "11434:11434"
+    environment:
+      BACKENDS: '[{"name":"stub","base_url":"http://stub:8080","local":true}]'
+      # The client-facing name is priced, not the upstream one, so the ledger
+      # books a real (tiny) cost and spend persistence is observable.
+      ROUTES: '{"deepseek-v4-flash":"stub/deepseek-v4-flash"}'
+      LEDGER_FILE: /data/spend.jsonl
+      KEYS_FILE: /data/keys.json
+      ADMIN_KEY: test-admin-key
+      ANON: closed
+      BUDGET: "20"
+      HEALTH_INTERVAL: "5"
+    user: "65534:65534"
+    volumes:
+      - data:/data
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "/bifrost", "-health"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+    depends_on:
+      - stub
+
+  stub:
+    image: python:3-alpine
+    command: ["python3", "/stub-backend.py"]
+    volumes:
+      - ./stub-backend.py:/stub-backend.py:ro
+
+volumes:
+  data:

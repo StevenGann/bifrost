@@ -21,8 +21,29 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
 
-  build:
+  # Proves the image works somewhere that is not our cluster: fresh volume,
+  # unprivileged user, restart, SIGTERM, and a loud failure on unwritable state.
+  # Runs on PRs too, so portability can regress visibly.
+  portability:
     needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the image for this runner
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          platforms: linux/amd64
+          tags: bifrost-portability:ci
+      - name: Portability test
+        env:
+          BIFROST_IMAGE: bifrost-portability:ci
+        run: ./scripts/portability-test.sh
+
+  build:
+    needs: [test, portability]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -43,3 +64,8 @@ jobs:
           tags: |
             ${{ env.IMAGE_NAME }}:latest
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
+      - name: Verify both architectures were published
+        run: |
+          docker buildx imagetools inspect "$IMAGE_NAME:$GITHUB_SHA" | tee /tmp/manifest.txt
+          grep -q 'linux/amd64' /tmp/manifest.txt
+          grep -q 'linux/arm64' /tmp/manifest.txt

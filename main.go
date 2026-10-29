@@ -1,16 +1,20 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -389,11 +393,22 @@ func loadPricing() map[string]pricing {
 }
 
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "-health" || os.Args[1] == "--health") {
+		probeHealth(envOr("PORT", "11434"))
+		return
+	}
+
 	cfg := loadConfig()
 	metrics = newMetrics(loadPricing())
 	governor = newGovernor(cfg)
 	if governor.storeErr != nil {
 		log.Fatalf("bifrost: %v (refusing to start with an unreadable key registry)", governor.storeErr)
+	}
+	if governor.loadErr != nil {
+		log.Fatalf("bifrost: cannot read the spend ledger: %v (refusing to start, or spend would be silently untracked)", governor.loadErr)
+	}
+	if err := checkState(cfg); err != nil {
+		log.Fatalf("bifrost: %v", err)
 	}
 	lruCache = newCacheFromConfig(cfg.CacheTTL, cfg.CacheMax)
 	circuits = newCircuits(cfg.CircuitThreshold, time.Duration(cfg.CircuitCooldown)*time.Second)
@@ -441,6 +456,29 @@ func main() {
 	mux.Handle("GET /metrics", metrics.Handler())
 
 	addr := ":" + cfg.Port
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	// Drain on SIGTERM/SIGINT instead of dropping in-flight responses. Under
+	// compose `stop`, or a k8s rolling restart, a stream that is half-written
+	// should finish rather than die mid-chunk.
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	go func() {
+		<-ctx.Done()
+		log.Printf("bifrost: shutting down")
+		shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutCtx); err != nil {
+			log.Printf("bifrost: shutdown: %v", err)
+		}
+	}()
+
 	log.Printf("bifrost listening on %s  backends=%d  routes=%d", addr, len(cfg.Backends), len(cfg.Routes))
-	log.Fatal(http.ListenAndServe(addr, mux))
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatalf("bifrost: %v", err)
+	}
 }

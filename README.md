@@ -144,6 +144,12 @@ feature that doesn't serve one of these is scope, not progress.
   dependencies, ~13 MB stripped image payload.
 - **Multi-arch** — `linux/amd64` and `linux/arm64` images, so it runs on a
   server, a NUC or a Pi.
+- **Runs outside our cluster** — a compose example, a `docker run` one-liner and
+  a deploying guide that assume nothing about our infrastructure. State is two
+  plain files on a volume; the image carries its own `/data` with the right
+  owner and a `HEALTHCHECK`, and shuts down on `SIGTERM` by draining. A CI job
+  starts it on a fresh volume, mints a key, restarts, and checks the key and the
+  spend are still there — so "runs elsewhere" is tested, not hoped.
 
 ## Planned
 
@@ -155,8 +161,6 @@ rewrite.
 - **Per-plan accounting** — spend broken out by the key pool's `plan` label, so
   "this month ran on the off-peak key" is a number rather than an inference.
   Per-tenant spend already appears in `/admin/keys`.
-- **Portability** — a compose example and docs that assume nothing about our
-  cluster, so "runs elsewhere" is a tested path rather than a hope.
 
 ## Not planned
 
@@ -169,6 +173,18 @@ rewrite.
 Bifrost stays thin on purpose: its value is the decision layer, not the compute.
 
 ## Quick start
+
+With compose — a gateway plus a local model, no API key required:
+
+```bash
+git clone https://github.com/StevenGann/bifrost.git
+cd bifrost/deploy/compose
+cp .env.example .env      # set ADMIN_KEY, point BACKENDS at your model
+docker compose up -d
+curl -s localhost:11434/v1/models
+```
+
+Or one container, straight from the registry:
 
 ```bash
 docker run -d --name bifrost -p 11434:11434 \
@@ -197,6 +213,7 @@ docker run -d --name bifrost -p 11434:11434 \
 - **[Architecture](docs/ARCHITECTURE.md)** — request lifecycle, routing,
   resilience, key pool, privacy, observability, code layout.
 - **[Configuration](docs/CONFIGURATION.md)** — the full environment reference.
+- **[Deploying](docs/DEPLOYING.md)** — running it outside our cluster: compose, state, secrets, what to back up.
 - **[Contributing](docs/CONTRIBUTING.md)** — build, test, extend.
 - **[Roadmap](docs/ROADMAP.md)** — the longer version of the plan above.
 

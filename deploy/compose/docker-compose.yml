@@ -1,0 +1,48 @@
+# Bifrost, self-hosted. Copy this directory, edit .env, then:
+#
+#   docker compose up -d
+#   curl localhost:11434/v1/models
+#   curl -X POST localhost:11434/admin/keys \
+#     -H "Authorization: Bearer $ADMIN_KEY" -H 'Content-Type: application/json' \
+#     -d '{"name":"my-app"}'
+#
+# See docs/DEPLOYING.md for what each variable means and what to back up.
+
+services:
+  bifrost:
+    image: ${BIFROST_IMAGE:-ghcr.io/stevengann/bifrost:latest}
+    ports:
+      - "${BIFROST_PORT:-11434}:11434"
+    env_file:
+      - .env
+    # The image runs as nobody; this must match so the state volume is writable.
+    user: "65534:65534"
+    volumes:
+      - bifrost-data:/data
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "/bifrost", "-health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    depends_on:
+      - ollama
+
+  # Optional: a local model so the quick start works with no API key at all.
+  # Point BACKENDS at something else and delete this service if you have your
+  # own. `docker compose up` will pull a large image the first time.
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  bifrost-data:
+  ollama-models:

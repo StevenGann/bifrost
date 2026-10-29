@@ -76,6 +76,14 @@ got.
   callers are a policy (`ANON` = `open`/`limited`/`closed`), and when limited
   they get a per-source-IP rate limit plus a shared monthly cap. `APP_KEYS`
   imports as static keys, and each ledger line now carries `key` beside `app`.
+- **Portability (v0.19):** the binary and the image assume nothing about our
+  cluster. `deploy/compose/` ships a compose file and an `.env.example`; a CI job
+  (`scripts/portability-test.sh`) starts the image on a fresh volume as an
+  unprivileged user, mints a key, restarts, and asserts the key and the month's
+  spend survive. `/data` exists in the image owned by the runtime user, the
+  image carries a `HEALTHCHECK` that runs `/bifrost -health`, `SIGTERM` drains
+  for 10s, and an unusable state directory now fails at startup instead of
+  silently under-recording spend.
 - Single static binary, stdlib-only; the only state is an optional spend ledger
   file and an optional key registry.
 
@@ -187,6 +195,31 @@ preserves the keyless behaviour, `limited` admits them but applies
 anonymous client) and `ANON_BUDGET` as a shared monthly cap, and `closed`
 refuses. Turning on `KEYS_FILE` or `APP_KEYS` defaults to `closed`; a presented
 but invalid key is always `401` and never falls through to anonymous.
+
+### 12. Portability — ✅ shipped (v0.19)
+
+Same binary, no cluster. The portability work was mostly making failure modes
+honest rather than adding features:
+
+- **State is checked at startup.** `LEDGER_FILE` and `KEYS_FILE` had no parent
+  directory creation, and a failed append was one log line per request — spend
+  silently stopped being recorded and budgets read zero. `checkState` now
+  creates the directory, proves it writable with a temp file, and refuses to
+  start otherwise. An unreadable ledger is no longer conflated with "no ledger
+  yet".
+- **`/data` is part of the image**, owned by 65534. Docker creates a named
+  volume root-owned when the mount point is absent, which made the first key
+  mint fail with EACCES.
+- **SIGTERM drains** for up to 10s instead of cutting a half-written stream.
+- **`-health`** lets a scratch image answer `HEALTHCHECK` without curl.
+- **`scripts/portability-test.sh`** is the acceptance test, run in CI on every
+  PR: fresh volume, unprivileged, mint → chat → restart → still valid, SIGTERM
+  exits 0, unwritable state fails loudly, healthcheck present. The published
+  manifest is checked for both `linux/amd64` and `linux/arm64`.
+
+Known limit, documented rather than solved: the ledger and key registry are
+single-writer files. Two replicas on one volume will interleave appends and
+double-count budgets.
 
 ## Non-goals
 
