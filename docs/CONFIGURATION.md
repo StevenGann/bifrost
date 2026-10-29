@@ -173,6 +173,7 @@ hours (Mon–Fri 01:00–04:00 and 06:00–10:00 UTC). Override or add models vi
 - `GET /healthz` — liveness
 - `GET /metrics` — Prometheus metrics
 - `GET /dashboard` — live HTML dashboard; `GET /dashboard.json` — the same snapshot as JSON, polled by the page
+- `POST /admin/keys` — mint a tenant key (returns the secret once); `GET /admin/keys` — list tenants with spend and last use; `DELETE /admin/keys/{id}` — revoke. Only registered when `ADMIN_KEY` is set, and each requires `Authorization: Bearer $ADMIN_KEY`
 
 ## Speech
 

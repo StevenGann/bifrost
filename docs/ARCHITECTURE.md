@@ -1,10 +1,11 @@
 # Architecture
 
 Bifrost is a single Go binary that sits between model clients and model
-backends. It is **stateless by design**: every behavior is driven by environment
-config (`BACKENDS`, `ROUTES`, …). The only state it keeps is an optional
-append-only spend ledger (`LEDGER_FILE`) and in-memory caches — which are
-deliberately never persisted, because cached responses can echo request PII.
+backends. It is **config-driven by design**: behaviour comes from environment
+config (`BACKENDS`, `ROUTES`, …). The state it keeps is deliberately small and
+explicit — an optional append-only spend ledger (`LEDGER_FILE`) and an optional
+tenant key registry (`KEYS_FILE`). In-memory caches are never persisted, because
+cached responses can echo request PII.
 
 ## Request lifecycle
 
@@ -30,6 +31,42 @@ sequenceDiagram
     U-->>B: 200 OK
     B-->>C: 200 OK — the 429 never reached the client
 ```
+
+## Identity and keys
+
+Every guarded route resolves a caller before it routes anything:
+
+```mermaid
+flowchart LR
+    R[Request] --> T{Bearer token?}
+    T -->|yes| L[Look up key id] --> V{live?}
+    V -->|no| E401[401]
+    V -->|yes| ID[Identity: name + key id]
+    T -->|no| A{ANON}
+    A -->|closed| E401
+    A -->|open / limited| AN[Identity: anonymous]
+    ID --> CHK[Check: rate limit + budget]
+    AN --> CHK
+    CHK -->|429 / 402| ER[Refuse]
+    CHK --> H[Handler]
+```
+
+A key is a tenant. Its `name` becomes the `app` label used by metrics, the
+dashboard, per-app budgets and the ledger, and its `id` is written to the ledger
+beside that label — so spend resolves to a credential rather than to a name the
+caller chose for itself.
+
+Keys are minted by Bifrost (`POST /admin/keys`) and stored as SHA-256 in
+`KEYS_FILE`; the plaintext exists only in the create response. Revocation is
+soft so historical ledger lines still resolve. `APP_KEYS` entries are imported
+as static keys, which keeps pre-0.18 deployments working but cannot be rotated
+through the API.
+
+Anonymous callers are a policy (`ANON`), not a fallback: with `limited`, the
+rate limiter is bucketed per source IP rather than per name, and the monthly cap
+is shared across all anonymous traffic. A token that is present but invalid is
+always a 401 and never becomes anonymous — degrading auth would make a typo
+indistinguishable from an attack.
 
 ## Routing
 
@@ -169,7 +206,8 @@ hours; override or add models via `PRICING`.
 | `catalog.go` | model catalog (`/v1/models`) |
 | `cache.go` | exact-match LRU cache |
 | `semantic.go` | semantic (embedding) cache |
-| `govern.go` | budgets, rate limits, spend ledger |
+| `govern.go` | identity resolution, budgets, rate limits, spend ledger |
+| `tenants.go` | tenant key registry, mint/revoke, admin API |
 | `health.go` | backend health poller |
 | `redact.go` | PII redaction |
 | `metrics.go` | Prometheus metrics |
