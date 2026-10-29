@@ -323,7 +323,9 @@ a{color:#7fd4ff}
   function shortMoney(n) {
     var v = Number(n || 0);
     if (v >= 0.01) return "$" + v.toFixed(2);
-    if (v > 0) return "$" + v.toFixed(4);
+    // Below a cent, four decimals renders $0.000022 as "$0.0000", which reads
+    // as free. Two significant figures keeps a real cost looking real.
+    if (v > 0) return "$" + Number(v.toPrecision(2));
     return "$0";
   }
   function clock(t) {
