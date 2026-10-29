@@ -95,6 +95,47 @@ type Metrics struct {
 	semanticMiss map[string]uint64     // "model|app"
 	circuitTrips map[string]uint64     // "backend"
 	recent       []requestRecord       // ring buffer (newest last)
+
+	// seed holds the part of the current month that happened before this
+	// process started, reconstructed from the spend ledger. It is kept apart
+	// from the live counters so the Prometheus counters stay process-scoped
+	// (a counter that starts non-zero after a restart lies to rate()).
+	seed map[string]seedAgg // "model|app"
+}
+
+// seedAgg is one row of the ledger collapsed by model and tenant.
+type seedAgg struct {
+	requests  uint64
+	tokensIn  uint64
+	tokensOut uint64
+	chars     uint64
+	cost      float64
+}
+
+// SeedFromLedger folds the current month's ledger entries into the dashboard
+// baseline. Without it a restart makes the month's spend look as if it never
+// happened: the ledger still has it, but the dashboard only ever showed the
+// counters of the running process.
+func (m *Metrics) SeedFromLedger(lines []ledgerLine) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.seed == nil {
+		m.seed = make(map[string]seedAgg)
+	}
+	for _, l := range lines {
+		model := l.Route
+		if model == "" {
+			model = l.Model // pre-route ledger lines only carry the billed model
+		}
+		k := model + "|" + l.App
+		a := m.seed[k]
+		a.requests++
+		a.tokensIn += uint64(l.In)
+		a.tokensOut += uint64(l.Out)
+		a.chars += uint64(l.Chars)
+		a.cost += l.Cost
+		m.seed[k] = a
+	}
 }
 
 func newMetrics(p map[string]pricing) *Metrics {
@@ -159,7 +200,7 @@ func (m *Metrics) Record(clientModel, upstreamModel, app, endpoint string, statu
 	})
 
 	if c > 0 {
-		governor.Record(app, upstreamModel, c)
+		governor.Record(app, clientModel, upstreamModel, tokIn, tokOut, c)
 	}
 	return c
 }

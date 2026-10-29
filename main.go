@@ -401,6 +401,10 @@ func main() {
 	cfg := loadConfig()
 	metrics = newMetrics(loadPricing())
 	governor = newGovernor(cfg)
+	// The dashboard and the Prometheus counters are process-scoped; the ledger
+	// is not. Seed the dashboard from the ledger so a restart does not make the
+	// month's spend look as though it never happened.
+	metrics.SeedFromLedger(governor.LedgerThisMonth())
 	if governor.storeErr != nil {
 		log.Fatalf("bifrost: %v (refusing to start with an unreadable key registry)", governor.storeErr)
 	}

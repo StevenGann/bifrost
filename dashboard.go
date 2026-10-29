@@ -38,6 +38,10 @@ type dashboardData struct {
 	TotalCacheMisses uint64
 	CacheHitRate     string
 	Uptime           string
+	// Period says what the totals cover. They are month-to-date from the
+	// ledger, not since this process started; Recent and the latency column
+	// are process-scoped and reset on restart.
+	Period string
 }
 
 // dashboardData builds a snapshot of the metrics for rendering. Called with the
@@ -51,6 +55,9 @@ func (m *Metrics) dashboardData() dashboardData {
 		maSet[k] = true
 	}
 	for k := range m.chars {
+		maSet[k] = true
+	}
+	for k := range m.seed {
 		maSet[k] = true
 	}
 
@@ -75,14 +82,15 @@ func (m *Metrics) dashboardData() dashboardData {
 			avgMs = h.sum / float64(h.count) * 1000
 		}
 
+		sd := m.seed[k]
 		d.Rows = append(d.Rows, dashboardRow{
 			Model:       model,
 			App:         app,
-			Requests:    reqs,
-			TokensIn:    m.tokensIn[k],
-			TokensOut:   m.tokensOut[k],
-			Chars:       m.chars[k],
-			CostUSD:     m.costUSD[k],
+			Requests:    reqs + sd.requests,
+			TokensIn:    m.tokensIn[k] + sd.tokensIn,
+			TokensOut:   m.tokensOut[k] + sd.tokensOut,
+			Chars:       m.chars[k] + sd.chars,
+			CostUSD:     m.costUSD[k] + sd.cost,
 			Errors:      errs,
 			AvgLatMs:    avgMs,
 			Retries:     m.retries[k],
@@ -90,11 +98,11 @@ func (m *Metrics) dashboardData() dashboardData {
 			CacheHits:   m.cacheHits[k],
 			CacheMisses: m.cacheMisses[k],
 		})
-		d.TotalRequests += reqs
-		d.TotalTokensIn += m.tokensIn[k]
-		d.TotalTokensOut += m.tokensOut[k]
-		d.TotalChars += m.chars[k]
-		d.TotalCostUSD += m.costUSD[k]
+		d.TotalRequests += reqs + sd.requests
+		d.TotalTokensIn += m.tokensIn[k] + sd.tokensIn
+		d.TotalTokensOut += m.tokensOut[k] + sd.tokensOut
+		d.TotalChars += m.chars[k] + sd.chars
+		d.TotalCostUSD += m.costUSD[k] + sd.cost
 		d.TotalCacheHits += m.cacheHits[k]
 		d.TotalCacheMisses += m.cacheMisses[k]
 	}
@@ -111,6 +119,7 @@ func (m *Metrics) dashboardData() dashboardData {
 		d.Recent[len(m.recent)-1-i] = m.recent[i]
 	}
 	d.Uptime = time.Since(m.start).Round(time.Second).String()
+	d.Period = "month to date (UTC)"
 	return d
 }
 
@@ -211,7 +220,7 @@ a{color:#7fd4ff}
 </style>
 </head>
 <body>
-<h1>Bifrost<span class="sub">LLM gateway</span></h1>
+<h1>Bifrost<span class="sub">LLM gateway &middot; totals are this month (UTC), seeded from the ledger</span></h1>
 <div class="totals">
   <div class="total"><div class="v" id="v-cost">—</div><div class="l">total cost (USD)</div></div>
   <div class="total"><div class="v" id="v-req">—</div><div class="l">requests</div></div>

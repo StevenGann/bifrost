@@ -68,7 +68,10 @@ type ledgerLine struct {
 	Ts    string  `json:"ts"`
 	App   string  `json:"app"`
 	Key   string  `json:"key,omitempty"`
-	Model string  `json:"model"`
+	Model string  `json:"model"`           // upstream model, the thing that is billed
+	Route string  `json:"route,omitempty"` // client-facing name the caller asked for
+	In    int     `json:"tokens_in,omitempty"`
+	Out   int     `json:"tokens_out,omitempty"`
 	Cost  float64 `json:"cost"`
 	Chars int     `json:"chars,omitempty"`
 }
@@ -84,6 +87,7 @@ type Governor struct {
 	buckets    map[string]*tokenBucket
 	month      string
 	monthSpend map[string]float64
+	monthLines []ledgerLine
 	monthTotal float64
 
 	// Tenant registry. Keys are minted here; APP_KEYS entries are imported as
@@ -162,8 +166,21 @@ func (g *Governor) load() {
 		if monthOf(l.Ts) == g.month {
 			g.monthSpend[l.App] += l.Cost
 			g.monthTotal += l.Cost
+			g.monthLines = append(g.monthLines, l)
 		}
 	}
+}
+
+// LedgerThisMonth returns the ledger entries for the current UTC month, in the
+// order they were written. The dashboard uses it to rebuild its month totals on
+// start-up: the metrics counters are process-scoped, so without this a restart
+// made the month's spend look as if it had never happened.
+func (g *Governor) LedgerThisMonth() []ledgerLine {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	out := make([]ledgerLine, len(g.monthLines))
+	copy(out, g.monthLines)
+	return out
 }
 
 func monthOf(ts string) string {
@@ -261,13 +278,13 @@ func (g *Governor) Check(id Identity) error {
 }
 
 // Record adds cost to the current month and appends it to the ledger.
-func (g *Governor) Record(app, model string, cost float64) {
+func (g *Governor) Record(app, route, model string, tokensIn, tokensOut int, cost float64) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.rolloverLocked()
 	g.monthSpend[app] += cost
 	g.monthTotal += cost
-	g.appendLocked(app, model, cost)
+	g.appendLocked(app, route, model, tokensIn, tokensOut, cost)
 }
 
 // RecordAudio books a speech request: characters synthesized and their cost.
@@ -286,7 +303,16 @@ func (g *Governor) appendAudioLocked(app, model string, chars int, cost float64)
 	if g.path == "" {
 		return
 	}
-	b, err := json.Marshal(ledgerLine{Ts: time.Now().UTC().Format(time.RFC3339), App: app, Key: g.store.idForName(app), Model: model, Cost: cost, Chars: chars})
+	line := ledgerLine{
+		Ts:    time.Now().UTC().Format(time.RFC3339),
+		App:   app,
+		Key:   g.store.idForName(app),
+		Model: model,
+		Cost:  cost,
+		Chars: chars,
+	}
+	g.monthLines = append(g.monthLines, line)
+	b, err := json.Marshal(line)
 	if err != nil {
 		return
 	}
@@ -310,11 +336,22 @@ func (g *Governor) rolloverLocked() {
 	}
 }
 
-func (g *Governor) appendLocked(app, model string, cost float64) {
+func (g *Governor) appendLocked(app, route, model string, tokensIn, tokensOut int, cost float64) {
 	if g.path == "" {
 		return
 	}
-	b, err := json.Marshal(ledgerLine{Ts: time.Now().UTC().Format(time.RFC3339), App: app, Key: g.store.idForName(app), Model: model, Cost: cost})
+	line := ledgerLine{
+		Ts:    time.Now().UTC().Format(time.RFC3339),
+		App:   app,
+		Key:   g.store.idForName(app),
+		Model: model,
+		Route: route,
+		In:    tokensIn,
+		Out:   tokensOut,
+		Cost:  cost,
+	}
+	g.monthLines = append(g.monthLines, line)
+	b, err := json.Marshal(line)
 	if err != nil {
 		return
 	}

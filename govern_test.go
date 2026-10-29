@@ -13,8 +13,8 @@ func TestGovernorBudget(t *testing.T) {
 	if err := g.Check(Identity{Name: "jeeves"}); err != nil {
 		t.Fatalf("expected under budget, got %v", err)
 	}
-	g.Record("jeeves", "deepseek-v4-flash", 0.6)
-	g.Record("jeeves", "deepseek-v4-flash", 0.5) // total 1.1 > 1.0
+	g.Record("jeeves", "deepseek-v4-flash", "deepseek-v4-flash", 0, 0, 0.6)
+	g.Record("jeeves", "deepseek-v4-flash", "deepseek-v4-flash", 0, 0, 0.5) // total 1.1 > 1.0
 	if err := g.Check(Identity{Name: "jeeves"}); err == nil {
 		t.Fatal("expected over-budget refusal")
 	} else if le, ok := err.(*limitError); !ok || le.Status() != 402 {
@@ -24,7 +24,7 @@ func TestGovernorBudget(t *testing.T) {
 
 func TestGovernorPerAppBudget(t *testing.T) {
 	g := newGovernor(Config{AppBudgets: map[string]float64{"patzer": 0.5}})
-	g.Record("patzer", "deepseek-v4-flash", 0.5)
+	g.Record("patzer", "deepseek-v4-flash", "deepseek-v4-flash", 0, 0, 0.5)
 	if err := g.Check(Identity{Name: "patzer"}); err == nil {
 		t.Fatal("expected patzer over its per-app budget")
 	} else if le, ok := err.(*limitError); !ok || le.Status() != 402 {
@@ -80,8 +80,8 @@ func TestGovernorAuth(t *testing.T) {
 func TestGovernorLedgerPersist(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "spend.jsonl")
 	g := newGovernor(Config{LedgerFile: path})
-	g.Record("jeeves", "deepseek-v4-flash", 0.123)
-	g.Record("patzer", "deepseek-v4-flash", 0.456)
+	g.Record("jeeves", "deepseek-v4-flash", "deepseek-v4-flash", 0, 0, 0.123)
+	g.Record("patzer", "deepseek-v4-flash", "deepseek-v4-flash", 0, 0, 0.456)
 
 	g2 := newGovernor(Config{LedgerFile: path})
 	if got := g2.monthSpend["jeeves"]; math.Abs(got-0.123) > 1e-9 {
@@ -94,7 +94,7 @@ func TestGovernorLedgerPersist(t *testing.T) {
 
 func TestGovernorMiddlewareEnforcesBudget(t *testing.T) {
 	g := newGovernor(Config{Budget: 0.10})
-	g.Record("jeeves", "deepseek-v4-flash", 0.10) // exhaust the budget
+	g.Record("jeeves", "deepseek-v4-flash", "deepseek-v4-flash", 0, 0, 0.10) // exhaust the budget
 
 	called := false
 	h := g.Wrap(func(w http.ResponseWriter, r *http.Request) {
