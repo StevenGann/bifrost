@@ -1,9 +1,15 @@
-# Bifrost
+<p align="center">
+  <img src="docs/logo.svg" width="80" height="80" alt="Bifrost — the rainbow bridge">
+</p>
 
-**One endpoint for every LLM you run.** Bifrost is an Ollama-compatible *and*
-OpenAI-compatible gateway that fronts every AI backend you own — cloud and local
-— behind a single URL, and puts routing, privacy, resilience, metering and
-caching at that seam. Point any tool at it and it works.
+<h1 align="center">Bifrost</h1>
+
+<p align="center"><strong>One endpoint for every LLM you run.</strong></p>
+
+Bifrost is an Ollama-compatible *and* OpenAI-compatible gateway that fronts every
+AI backend you own — cloud and local — behind a single URL, and puts routing,
+privacy, resilience, metering and caching at that seam. Point any tool at it and
+it works.
 
 Named for the Norse rainbow bridge: it carries requests from Ollama and OpenAI
 clients (Midgard) to the models (Asgard).

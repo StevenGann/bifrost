@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Bifrost">
+  <title>Bifrost</title>
+  <defs>
+    <!-- The span is the rainbow: one arc, three stops, left to right. Values
+         are kept mid-dark so the mark holds on white as well as on #0d1117. -->
+    <linearGradient id="bifrost-rainbow" x1="10" y1="0" x2="54" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0ea5e9"/>
+      <stop offset=".5" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#f59e0b"/>
+    </linearGradient>
+  </defs>
+  <!-- Deck. Load-bearing, darker than the span's mid-tones so it never reads as
+       an underline. -->
+  <path d="M5 42h54" fill="none" stroke="#67798f" stroke-width="6" stroke-linecap="round"/>
+  <!-- Span. Butt caps land the feet flat into the deck instead of bulging over
+       it, which is what smeared the join at 24px. -->
+  <path d="M11 43Q32 6 53 43" fill="none" stroke="url(#bifrost-rainbow)" stroke-width="7.5" stroke-linecap="butt"/>
+</svg>
