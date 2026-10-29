@@ -58,7 +58,7 @@ func TestLedgerAppendsAcrossReload(t *testing.T) {
 	dir := t.TempDir()
 	ledger := filepath.Join(dir, "spend.jsonl")
 	g := newGovernor(Config{LedgerFile: ledger})
-	g.Record("hermes", "deepseek-v4-flash", "deepseek-v4-flash", 0, 0, 0.25)
+	g.Record("hermes", "deepseek-v4-flash", "deepseek-v4-flash", 0, 0, 0.25, Served{})
 
 	got, err := os.ReadFile(ledger)
 	if err != nil {

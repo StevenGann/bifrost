@@ -53,8 +53,8 @@ func TestCostAt(t *testing.T) {
 
 func TestMetricsRender(t *testing.T) {
 	m := newMetrics(defaultPricing())
-	m.Record("coach", "deepseek-v4-flash", "patzer", "/api/chat", 200, 100, 50, 500*time.Millisecond, false)
-	m.Record("coach", "deepseek-v4-flash", "patzer", "/api/chat", 200, 200, 100, 2*time.Second, false)
+	m.Record("coach", "deepseek-v4-flash", "patzer", "/api/chat", 200, 100, 50, 500*time.Millisecond, false, Served{})
+	m.Record("coach", "deepseek-v4-flash", "patzer", "/api/chat", 200, 200, 100, 2*time.Second, false, Served{})
 
 	rec := httptest.NewRecorder()
 	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))

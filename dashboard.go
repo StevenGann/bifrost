@@ -26,8 +26,19 @@ type dashboardRow struct {
 	CacheMisses uint64
 }
 
+// flowRow is one client→upstream pair, the unit the Sankey is drawn from.
+type flowRow struct {
+	Client    string
+	Upstream  string
+	Requests  uint64
+	TokensIn  uint64
+	TokensOut uint64
+	CostUSD   float64
+}
+
 type dashboardData struct {
 	Rows             []dashboardRow
+	Flows            []flowRow
 	Recent           []requestRecord
 	TotalRequests    uint64
 	TotalTokensIn    uint64
@@ -108,6 +119,38 @@ func (m *Metrics) dashboardData() dashboardData {
 		d.TotalCacheMisses += m.cacheMisses[k]
 	}
 	sort.Slice(d.Rows, func(i, j int) bool { return d.Rows[i].CostUSD > d.Rows[j].CostUSD })
+
+	// The two accounting axes are the same money seen from both ends: what each
+	// client spent, and which upstream credential it was spent on. Seeded and
+	// live traffic are folded together here so a restart does not split the
+	// diagram in two.
+	merged := map[string]*flowAgg{}
+	for _, src := range []map[string]*flowAgg{m.flowsSeed, m.flows} {
+		for k, v := range src {
+			if cur := merged[k]; cur != nil {
+				cur.requests += v.requests
+				cur.tokensIn += v.tokensIn
+				cur.tokensOut += v.tokensOut
+				cur.cost += v.cost
+			} else {
+				cp := *v
+				merged[k] = &cp
+			}
+		}
+	}
+	for _, f := range merged {
+		d.Flows = append(d.Flows, flowRow{
+			Client: f.client, Upstream: f.upstream,
+			Requests: f.requests, TokensIn: f.tokensIn, TokensOut: f.tokensOut,
+			CostUSD: f.cost,
+		})
+	}
+	sort.Slice(d.Flows, func(i, j int) bool {
+		if d.Flows[i].CostUSD != d.Flows[j].CostUSD {
+			return d.Flows[i].CostUSD > d.Flows[j].CostUSD
+		}
+		return d.Flows[i].Requests > d.Flows[j].Requests
+	})
 
 	if total := d.TotalCacheHits + d.TotalCacheMisses; total > 0 {
 		d.CacheHitRate = fmt.Sprintf("%.0f%%", float64(d.TotalCacheHits)/float64(total)*100)
@@ -218,6 +261,13 @@ th{color:#7fd4ff;font-weight:600}
   .foot{font-size:.72rem}
 }
 a{color:#7fd4ff}
+.flows{margin:.5rem 0 1.5rem;overflow-x:auto}
+.flows svg{display:block;max-width:100%;height:auto}
+.flows text{font-family:system-ui,-apple-system,sans-serif;font-size:11px;fill:#9fb8cc}
+.flows svg text{fill:#d6e2ee;font-size:12.5px}
+.flows svg text.val{fill:#93a4b3}
+.flows-cap{color:#6b7a8a;font-size:11px;margin:0 0 6px}
+.flows .empty{color:#6b7a8a;font-size:.8rem}
 </style>
 </head>
 <body>
@@ -239,6 +289,9 @@ a{color:#7fd4ff}
 <tbody id="rows"></tbody>
 </table>
 
+<h2>Clients &rarr; upstreams</h2>
+<div id="flows" class="flows"></div>
+
 <h2>Recent requests</h2>
 <table>
 <thead><tr><th>time (UTC)</th><th>app</th><th>model</th><th>endpoint</th><th>status</th><th>tok in</th><th>tok out</th><th>cost</th><th>latency</th></tr></thead>
@@ -249,6 +302,8 @@ a{color:#7fd4ff}
 <p class="foot">Prometheus format at <a href="/metrics">/metrics</a> · JSON at <a href="/dashboard.json">/dashboard.json</a></p>
 <noscript><p class="foot err">This page draws its numbers with JavaScript. The same data is at <a href="/dashboard.json">/dashboard.json</a> and <a href="/metrics">/metrics</a>.</p></noscript>
 
+<script src="/assets/d3.min.js"></script>
+<script src="/assets/d3-sankey.min.js"></script>
 <script type="application/json" id="boot">{{.Boot}}</script>
 
 <script>
@@ -263,6 +318,14 @@ a{color:#7fd4ff}
   }
   function num(n) { return Number(n || 0).toLocaleString(); }
   function money(n) { return "$" + Number(n || 0).toFixed(6); }
+  // The table wants full precision; a diagram label wants something a person
+  // can read at a glance.
+  function shortMoney(n) {
+    var v = Number(n || 0);
+    if (v >= 0.01) return "$" + v.toFixed(2);
+    if (v > 0) return "$" + v.toFixed(4);
+    return "$0";
+  }
   function clock(t) {
     var d = new Date(t);
     return isNaN(d) ? "" : d.toISOString().slice(11, 19);
@@ -310,6 +373,120 @@ a{color:#7fd4ff}
     if (el && el.textContent !== String(v)) el.textContent = v;
   }
 
+
+  // Clients on the left, upstream credentials on the right. d3-sankey does the
+  // layout, the collision handling and the ribbon geometry; this only maps our
+  // ledger rows into its node/link shape.
+  function renderFlows(flows) {
+    var box = document.getElementById("flows");
+    if (!flows || !flows.length) { box.innerHTML = '<div class="empty">no traffic yet</div>'; return; }
+
+    var useCost = flows.some(function (f) { return (f.CostUSD || 0) > 0; });
+    function weight(f) { return useCost ? (f.CostUSD || 0) : (f.Requests || 0); }
+    function fmt(v) { return useCost ? shortMoney(v) : num(v); }
+
+    var clients = [], ups = [], seen = {};
+    flows.forEach(function (f) {
+      if (!seen["c:" + f.Client]) { seen["c:" + f.Client] = 1; clients.push(f.Client); }
+      if (!seen["u:" + f.Upstream]) { seen["u:" + f.Upstream] = 1; ups.push(f.Upstream); }
+    });
+
+    var nodes = clients.map(function (c) { return { name: c, side: "client" }; })
+      .concat(ups.map(function (u) { return { name: u, side: "upstream" }; }));
+    var index = {};
+    nodes.forEach(function (n, i) { index[(n.side === "client" ? "c:" : "u:") + n.name] = i; });
+
+    var total = {};
+    flows.forEach(function (f) {
+      total["c:" + f.Client] = (total["c:" + f.Client] || 0) + weight(f);
+      total["u:" + f.Upstream] = (total["u:" + f.Upstream] || 0) + weight(f);
+    });
+    nodes.forEach(function (n) { n.total = total[(n.side === "client" ? "c:" : "u:") + n.name] || 0; });
+
+    var links = flows.map(function (f) {
+      return { source: index["c:" + f.Client], target: index["u:" + f.Upstream], value: Math.max(weight(f), 1e-9), flow: f };
+    });
+
+    var W = Math.max(box.clientWidth || 720, 320);
+    // A narrow screen has little horizontal room, so give the diagram more
+    // height instead: ribbons stay traceable when they are not squashed.
+    var H = W < 520 ? 520 : 400;
+    // Budget the margins from the longest label rather than guessing: the
+    // value sits beside the name, so a long backend name must not clip.
+    var CH = 7.3, VAL = 46, PAD = 14;
+    var M = {
+      left: Math.min(240, PAD + (d3.max(clients, function (c) { return c.length; }) || 0) * CH + VAL),
+      right: Math.min(260, PAD + (d3.max(ups, function (u) { return u.length; }) || 0) * CH + VAL),
+      top: 14, bottom: 14
+    };
+
+    box.innerHTML = "";
+    var cap = document.createElement("div");
+    cap.className = "flows-cap";
+    cap.textContent = clients.length + " client" + (clients.length === 1 ? "" : "s") + " → " +
+                      ups.length + " upstream" + (ups.length === 1 ? "" : "s") +
+                      " · ribbon width = " + (useCost ? "cost" : "requests");
+    box.appendChild(cap);
+
+    var svg = d3.select(box).append("svg")
+      .attr("viewBox", [0, 0, W, H].join(" "))
+      .attr("width", W).attr("height", H)
+      .attr("role", "img")
+      .attr("aria-label", "sankey diagram of clients to upstreams");
+
+    var layout = d3.sankey()
+      .nodeWidth(9)
+      .nodePadding(16)
+      .extent([[M.left, M.top], [W - M.right, H - M.bottom]])
+      ({
+        nodes: nodes.map(function (d) { return Object.assign({}, d); }),
+        links: links.map(function (d) { return Object.assign({}, d); })
+      });
+
+    var color = d3.scaleOrdinal().domain(clients).range(d3.schemeTableau10);
+
+    svg.append("g")
+      .attr("fill", "none")
+      .selectAll("path")
+      .data(layout.links)
+      .join("path")
+      .attr("d", d3.sankeyLinkHorizontal())
+      .attr("stroke", function (d) { return color(d.source.name); })
+      // A free request still flows but carries no money: draw it as a hairline
+      // so the ribbon width keeps meaning cost.
+      .attr("stroke-width", function (d) { return d.flow && weight(d.flow) > 0 ? Math.max(1.5, d.width) : 1; })
+      .attr("stroke-opacity", function (d) { return d.flow && weight(d.flow) > 0 ? 0.45 : 0.15; })
+      .append("title")
+      .text(function (d) {
+        return d.source.name + " → " + d.target.name + ": " +
+               (useCost ? money(d.flow.CostUSD) : num(d.flow.Requests) + " requests");
+      });
+
+    var g = svg.append("g")
+      .selectAll("g")
+      .data(layout.nodes)
+      .join("g");
+
+    g.append("rect")
+      .attr("x", function (d) { return d.x0; })
+      .attr("y", function (d) { return d.y0; })
+      .attr("width", function (d) { return d.x1 - d.x0; })
+      .attr("height", function (d) { return Math.max(1, d.y1 - d.y0); })
+      .attr("rx", 1.5)
+      .attr("fill", function (d) { return d.side === "client" ? color(d.name) : "#5d6f80"; });
+
+    var label = g.append("text")
+      .attr("x", function (d) { return d.side === "client" ? d.x0 - 8 : d.x1 + 8; })
+      .attr("y", function (d) { return (d.y0 + d.y1) / 2; })
+      .attr("dy", "0.35em")
+      .attr("text-anchor", function (d) { return d.side === "client" ? "end" : "start"; });
+    label.append("tspan").text(function (d) { return d.name; });
+    label.append("tspan")
+      .attr("class", "val")
+      .attr("dx", 6)
+      .text(function (d) { return fmt(d.total); });
+  }
+
   function apply(d) {
     setText("v-cost", money(d.TotalCostUSD));
     setText("v-req", num(d.TotalRequests));
@@ -321,6 +498,7 @@ a{color:#7fd4ff}
     setText("v-up", d.Uptime);
 
     document.getElementById("rows").innerHTML = rowsHTML(d.Rows);
+    renderFlows(d.Flows);
     document.getElementById("recent").innerHTML = recentHTML(d.Recent);
 
     // Flash the cost card only when it actually moved, so a quiet gateway

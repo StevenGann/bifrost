@@ -79,7 +79,7 @@ func TestResolveKeyRotation(t *testing.T) {
 
 	attempts := 0
 	var keysUsed []string
-	_, up, retries, fallbacks := cfg.resolve("m", func(b Backend, up string) (error, bool) {
+	_, up, retries, fallbacks, _ := cfg.resolve("m", func(b Backend, up string) (error, bool) {
 		attempts++
 		keysUsed = append(keysUsed, b.APIKey)
 		if b.APIKey == "key-a" {

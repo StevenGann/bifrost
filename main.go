@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	embedded "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -392,6 +394,18 @@ func loadPricing() map[string]pricing {
 	return p
 }
 
+//go:embed web/vendor
+var webAssets embedded.FS
+
+// cacheable marks immutable vendored files so a dashboard reload does not
+// re-download 280 KB of d3.
+func cacheable(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		h.ServeHTTP(w, r)
+	})
+}
+
 func main() {
 	if len(os.Args) > 1 && (os.Args[1] == "-health" || os.Args[1] == "--health") {
 		probeHealth(envOr("PORT", "11434"))
@@ -424,6 +438,14 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
+
+	// The dashboard's charts are drawn by d3, vendored into the binary so a
+	// host with no route to a CDN still renders.
+	if sub, err := fs.Sub(webAssets, "web/vendor"); err == nil {
+		mux.Handle("GET /assets/", http.StripPrefix("/assets/", cacheable(http.FileServer(http.FS(sub)))))
+	} else {
+		log.Fatalf("bifrost: embedded assets: %v", err)
+	}
 
 	// Tenant key administration. Unregistered unless ADMIN_KEY is set, so the
 	// surface does not exist at all on a deployment that does not want it.

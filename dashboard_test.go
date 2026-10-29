@@ -10,8 +10,8 @@ import (
 
 func TestDashboardRenders(t *testing.T) {
 	m := newMetrics(defaultPricing())
-	m.Record("coach", "deepseek-v4-flash", "patzer", "/api/chat", 200, 100, 50, 500*time.Millisecond, false)
-	m.Record("deepseek-v4-pro", "deepseek-v4-pro", "unknown", "/v1/chat/completions", 502, 20, 0, 10*time.Millisecond, true)
+	m.Record("coach", "deepseek-v4-flash", "patzer", "/api/chat", 200, 100, 50, 500*time.Millisecond, false, Served{})
+	m.Record("deepseek-v4-pro", "deepseek-v4-pro", "unknown", "/v1/chat/completions", 502, 20, 0, 10*time.Millisecond, true, Served{})
 
 	rec := httptest.NewRecorder()
 	m.Dashboard().ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
@@ -69,8 +69,8 @@ func TestDashboardRenders(t *testing.T) {
 // TestDashboardJSON pins the shape the page's updater depends on.
 func TestDashboardJSON(t *testing.T) {
 	m := newMetrics(defaultPricing())
-	m.Record("coach", "deepseek-v4-flash", "patzer", "/api/chat", 200, 100, 50, 500*time.Millisecond, false)
-	m.RecordAudio("tts", "eleven_multilingual_v2", "patzer", "/v1/audio/speech", 200, 42, 0.00042, 800*time.Millisecond, false)
+	m.Record("coach", "deepseek-v4-flash", "patzer", "/api/chat", 200, 100, 50, 500*time.Millisecond, false, Served{})
+	m.RecordAudio("tts", "eleven_multilingual_v2", "patzer", "/v1/audio/speech", 200, 42, 0.00042, 800*time.Millisecond, false, Served{})
 
 	rec := httptest.NewRecorder()
 	m.DashboardJSON().ServeHTTP(rec, httptest.NewRequest("GET", "/dashboard.json", nil))

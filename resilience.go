@@ -79,7 +79,7 @@ type attemptFn func(b Backend, upstream string) (err error, committed bool)
 // resolve walks the FALLBACKS chain, running attemptFn with retry on transient
 // failures. It returns the final error (nil on success), the last upstream
 // model attempted, and retry/fallback counts for metrics.
-func (c Config) resolve(clientModel string, attempt attemptFn) (err error, lastUpstream string, retries, fallbacks int) {
+func (c Config) resolve(clientModel string, attempt attemptFn) (err error, lastUpstream string, retries, fallbacks int, served Served) {
 	wantsLocal := strings.HasPrefix(clientModel, "private:")
 	cur := clientModel
 	seen := map[string]bool{}
@@ -94,19 +94,24 @@ func (c Config) resolve(clientModel string, attempt attemptFn) (err error, lastU
 
 		b, up, rerr := c.route(cur)
 		if rerr != nil {
-			return &routeError{rerr.Error()}, lastUpstream, retries, fallbacks
+			return &routeError{rerr.Error()}, lastUpstream, retries, fallbacks, served
 		}
 		if wantsLocal && !b.Local {
-			return &routeError{fmt.Sprintf("model %q requires a local backend but %q is not local", clientModel, cur)}, lastUpstream, retries, fallbacks
+			return &routeError{fmt.Sprintf("model %q requires a local backend but %q is not local", clientModel, cur)}, lastUpstream, retries, fallbacks, served
 		}
 		lastUpstream = up
 
 		// Select the first key for this backend (no-op for single-key backends).
+		// The identity rides along so the ledger can attribute the spend to the
+		// credential that actually answered.
+		served = Served{Backend: b.Name}
 		keyID := ""
 		if len(b.Keys) > 0 {
 			if k, ok := keyRings.pick(b.Name, b.Keys); ok {
 				b.APIKey = k.Key
 				keyID = k.ID
+				served.Key = k.ID
+				served.Plan = k.Plan
 			}
 		}
 
@@ -133,17 +138,17 @@ func (c Config) resolve(clientModel string, attempt attemptFn) (err error, lastU
 		lastErr = err
 
 		if err == nil || committed {
-			return err, lastUpstream, retries, fallbacks
+			return err, lastUpstream, retries, fallbacks, served
 		}
 
 		next := c.Fallbacks[cur]
 		if next == "" {
-			return err, lastUpstream, retries, fallbacks
+			return err, lastUpstream, retries, fallbacks, served
 		}
 		fallbacks++
 		cur = next
 	}
-	return lastErr, lastUpstream, retries, fallbacks
+	return lastErr, lastUpstream, retries, fallbacks, served
 }
 
 // complete routes a client model to its backend, retries transient failures,
@@ -154,7 +159,7 @@ func (c Config) complete(clientModel, app, endpoint string, build func(upstream 
 	var result *OpenAIChatResponse
 	var usage Usage
 
-	err, lastUpstream, retries, fallbacks := c.resolve(clientModel, func(b Backend, up string) (error, bool) {
+	err, lastUpstream, retries, fallbacks, served := c.resolve(clientModel, func(b Backend, up string) (error, bool) {
 		r, u, e := chat(b, build(up))
 		if e == nil {
 			result = r
@@ -174,6 +179,6 @@ func (c Config) complete(clientModel, app, endpoint string, build func(upstream 
 	if err != nil {
 		status = statusOf(err)
 	}
-	metrics.Record(clientModel, lastUpstream, app, endpoint, status, usage.PromptTokens, usage.CompletionTokens, time.Since(start), err != nil)
+	metrics.Record(clientModel, lastUpstream, app, endpoint, status, usage.PromptTokens, usage.CompletionTokens, time.Since(start), err != nil, served)
 	return result, usage, status, err
 }

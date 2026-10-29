@@ -135,7 +135,7 @@ func handleChat(w http.ResponseWriter, r *http.Request, cfg Config) {
 		enc := json.NewEncoder(w)
 		var usage Usage
 		committed := false
-		err, lastUpstream, retries, fallbacks := cfg.resolve(req.Model, func(b Backend, up string) (error, bool) {
+		err, lastUpstream, retries, fallbacks, served := cfg.resolve(req.Model, func(b Backend, up string) (error, bool) {
 			oreq := toOpenAIRequest(up, req.Messages, req.Format, req.Options.Temperature, req.Options.TopP, req.Options.NumPredict)
 			c, e := streamChat(b, oreq, func(content string) error {
 				committed = true
@@ -160,7 +160,7 @@ func handleChat(w http.ResponseWriter, r *http.Request, cfg Config) {
 		}
 		if err != nil && !committed {
 			status := errorStatus(statusOf(err))
-			metrics.Record(clientModel, lastUpstream, app, "/api/chat", status, 0, 0, time.Since(start), true)
+			metrics.Record(clientModel, lastUpstream, app, "/api/chat", status, 0, 0, time.Since(start), true, served)
 			w.Header().Set("Content-Type", "application/json")
 			writeJSON(w, status, map[string]string{"error": err.Error()})
 			return
@@ -170,7 +170,7 @@ func handleChat(w http.ResponseWriter, r *http.Request, cfg Config) {
 		if err != nil {
 			log.Printf("chat stream error: %v", err)
 		}
-		metrics.Record(clientModel, lastUpstream, app, "/api/chat", 200, usage.PromptTokens, usage.CompletionTokens, time.Since(start), err != nil)
+		metrics.Record(clientModel, lastUpstream, app, "/api/chat", 200, usage.PromptTokens, usage.CompletionTokens, time.Since(start), err != nil, served)
 		return
 	}
 
@@ -215,7 +215,7 @@ func handleGenerate(w http.ResponseWriter, r *http.Request, cfg Config) {
 		enc := json.NewEncoder(w)
 		var usage Usage
 		committed := false
-		err, lastUpstream, retries, fallbacks := cfg.resolve(req.Model, func(b Backend, up string) (error, bool) {
+		err, lastUpstream, retries, fallbacks, served := cfg.resolve(req.Model, func(b Backend, up string) (error, bool) {
 			oreq := toOpenAIRequest(up, messages, req.Format, req.Options.Temperature, req.Options.TopP, req.Options.NumPredict)
 			c, e := streamChat(b, oreq, func(content string) error {
 				committed = true
@@ -235,7 +235,7 @@ func handleGenerate(w http.ResponseWriter, r *http.Request, cfg Config) {
 		}
 		if err != nil && !committed {
 			status := errorStatus(statusOf(err))
-			metrics.Record(clientModel, lastUpstream, app, "/api/generate", status, 0, 0, time.Since(start), true)
+			metrics.Record(clientModel, lastUpstream, app, "/api/generate", status, 0, 0, time.Since(start), true, served)
 			w.Header().Set("Content-Type", "application/json")
 			writeJSON(w, status, map[string]string{"error": err.Error()})
 			return
@@ -245,7 +245,7 @@ func handleGenerate(w http.ResponseWriter, r *http.Request, cfg Config) {
 		if err != nil {
 			log.Printf("generate stream error: %v", err)
 		}
-		metrics.Record(clientModel, lastUpstream, app, "/api/generate", 200, usage.PromptTokens, usage.CompletionTokens, time.Since(start), err != nil)
+		metrics.Record(clientModel, lastUpstream, app, "/api/generate", 200, usage.PromptTokens, usage.CompletionTokens, time.Since(start), err != nil, served)
 		return
 	}
 

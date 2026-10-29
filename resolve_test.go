@@ -13,7 +13,7 @@ func TestResolveRetriesTransient(t *testing.T) {
 		Retries:  2,
 	}
 	calls := 0
-	err, up, retries, fb := cfg.resolve("m", func(b Backend, u string) (error, bool) {
+	err, up, retries, fb, _ := cfg.resolve("m", func(b Backend, u string) (error, bool) {
 		calls++
 		if calls < 2 {
 			return &upstreamError{500, "boom"}, false
@@ -36,7 +36,7 @@ func TestResolveStreamingRetryBeforeCommit(t *testing.T) {
 		Retries:  2,
 	}
 	calls := 0
-	err, _, retries, _ := cfg.resolve("m", func(b Backend, u string) (error, bool) {
+	err, _, retries, _, _ := cfg.resolve("m", func(b Backend, u string) (error, bool) {
 		calls++
 		if calls == 1 {
 			return &upstreamError{0, "conn refused"}, false // pre-commit failure
@@ -65,7 +65,7 @@ func TestResolveFailsOver(t *testing.T) {
 		Fallbacks: map[string]string{"m": "m2"},
 	}
 	var lastUp string
-	err, up, _, fb := cfg.resolve("m", func(b Backend, u string) (error, bool) {
+	err, up, _, fb, _ := cfg.resolve("m", func(b Backend, u string) (error, bool) {
 		lastUp = u
 		if b.Name == "a" {
 			return &upstreamError{503, "down"}, false
@@ -95,7 +95,7 @@ func TestResolveCircuitOpenSkipsRetryFailsOver(t *testing.T) {
 		Retries:   5,
 	}
 	callsA := 0
-	err, _, retries, fb := cfg.resolve("m", func(b Backend, u string) (error, bool) {
+	err, _, retries, fb, _ := cfg.resolve("m", func(b Backend, u string) (error, bool) {
 		if b.Name == "a" {
 			callsA++
 			return errCircuitOpen, false
@@ -118,7 +118,7 @@ func TestResolveCommittedStopsRetry(t *testing.T) {
 		Retries:  5,
 	}
 	calls := 0
-	err, _, retries, fb := cfg.resolve("m", func(b Backend, u string) (error, bool) {
+	err, _, retries, fb, _ := cfg.resolve("m", func(b Backend, u string) (error, bool) {
 		calls++
 		return errors.New("mid-stream"), true // committed
 	})

@@ -17,6 +17,16 @@ type apiKey struct {
 	Weight int    `json:"weight"`
 }
 
+// Served identifies the upstream credential that actually answered a request.
+// It never carries secret material: Backend is the configured name, Key is the
+// pool key's operator-supplied id, Plan its billing tag. Single-key backends
+// have no id, so Key stays empty and the backend name is the identity.
+type Served struct {
+	Backend string
+	Key     string
+	Plan    string
+}
+
 // keyRing rotates across a backend's keys, skipping keys that are cooling down
 // after a rate-limit/auth failure.
 type keyRing struct {

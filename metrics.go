@@ -100,8 +100,51 @@ type Metrics struct {
 	// process started, reconstructed from the spend ledger. It is kept apart
 	// from the live counters so the Prometheus counters stay process-scoped
 	// (a counter that starts non-zero after a restart lies to rate()).
-	seed      map[string]seedAgg // "model|app"
-	seedMonth string             // UTC month the seed belongs to
+	seed      map[string]seedAgg  // "model|app"
+	flows     map[string]*flowAgg // live "client\x00upstream"
+	flowsSeed map[string]*flowAgg // from the ledger, dropped at month rollover
+	seedMonth string              // UTC month the seed belongs to
+}
+
+// flowAgg is one client→upstream pair collapsed out of the ledger: the two
+// sides of the same money. Upstream is the backend, with the pool key id
+// appended when the backend has a key pool.
+type flowAgg struct {
+	client, upstream string
+	requests         uint64
+	tokensIn         uint64
+	tokensOut        uint64
+	cost             float64
+}
+
+// upstreamLabel is how an upstream credential is named in the flows view.
+// A backend with no key pool is identified by its name alone; one with a pool
+// is backend/id, so two plans on the same API are distinguishable.
+func upstreamLabel(up Served) string {
+	if up.Backend == "" {
+		return "unknown"
+	}
+	if up.Key == "" {
+		return up.Backend
+	}
+	return up.Backend + "/" + up.Key
+}
+
+// recordFlow folds one request into a client→upstream matrix.
+func foldFlow(dst map[string]*flowAgg, client string, up Served, tokIn, tokOut int, cost float64) {
+	if dst == nil {
+		return
+	}
+	k := client + "\x00" + upstreamLabel(up)
+	f := dst[k]
+	if f == nil {
+		f = &flowAgg{client: client, upstream: upstreamLabel(up)}
+		dst[k] = f
+	}
+	f.requests++
+	f.tokensIn += uint64(tokIn)
+	f.tokensOut += uint64(tokOut)
+	f.cost += cost
 }
 
 // seedAgg is one row of the ledger collapsed by model and tenant.
@@ -126,6 +169,7 @@ func (m *Metrics) clearStaleSeed() {
 		return
 	}
 	m.seed = nil
+	m.flowsSeed = nil
 	m.seedMonth = ""
 }
 
@@ -149,6 +193,11 @@ func (m *Metrics) SeedFromLedger(month string, lines []ledgerLine) {
 		a.chars += uint64(l.Chars)
 		a.cost += l.Cost
 		m.seed[k] = a
+
+		// The same line feeds the client→upstream matrix. Lines written before
+		// the upstream side existed land on "unknown", which is truthful: we
+		// cannot say now which credential paid for them.
+		foldFlow(m.flowsSeed, l.App, Served{Backend: l.Backend, Key: l.UpKey, Plan: l.Plan}, l.In, l.Out, l.Cost)
 	}
 }
 
@@ -171,13 +220,15 @@ func newMetrics(p map[string]pricing) *Metrics {
 		semanticHits: map[string]uint64{},
 		semanticMiss: map[string]uint64{},
 		circuitTrips: map[string]uint64{},
+		flows:        map[string]*flowAgg{},
+		flowsSeed:    map[string]*flowAgg{},
 	}
 }
 
 // Record a completed completion request. clientModel is the caller-facing name
 // used as the metric label; upstreamModel is what cost is priced against. It
 // returns the estimated USD cost and feeds the durable spend ledger.
-func (m *Metrics) Record(clientModel, upstreamModel, app, endpoint string, status int, tokIn, tokOut int, dur time.Duration, isErr bool) float64 {
+func (m *Metrics) Record(clientModel, upstreamModel, app, endpoint string, status int, tokIn, tokOut int, dur time.Duration, isErr bool, up Served) float64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ma := clientModel + "|" + app
@@ -186,6 +237,7 @@ func (m *Metrics) Record(clientModel, upstreamModel, app, endpoint string, statu
 	m.tokensOut[ma] += uint64(tokOut)
 	c := m.cost(upstreamModel, tokIn, tokOut)
 	m.costUSD[ma] += c
+	foldFlow(m.flows, app, up, tokIn, tokOut, c)
 	if isErr {
 		m.errors[ma+"|"+endpoint]++
 	}
@@ -217,20 +269,21 @@ func (m *Metrics) Record(clientModel, upstreamModel, app, endpoint string, statu
 	// traffic made the durable request count disagree with the live one: local
 	// and cached requests vanished from the dashboard on restart even though
 	// their cost was zero. A zero-cost line changes no budget.
-	governor.Record(app, clientModel, upstreamModel, tokIn, tokOut, c)
+	governor.Record(app, clientModel, upstreamModel, tokIn, tokOut, c, up)
 	return c
 }
 
 // RecordAudio books a completed speech request. Speech has no tokens and is
 // priced per character, so the caller supplies the cost; the character count
 // rides alongside it into the dashboard and the durable ledger.
-func (m *Metrics) RecordAudio(clientModel, upstreamModel, app, endpoint string, status, chars int, costUSD float64, dur time.Duration, isErr bool) {
+func (m *Metrics) RecordAudio(clientModel, upstreamModel, app, endpoint string, status, chars int, costUSD float64, dur time.Duration, isErr bool, up Served) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ma := clientModel + "|" + app
 	m.requests[ma+"|"+endpoint+"|"+strconv.Itoa(status)]++
 	m.chars[ma] += uint64(chars)
 	m.costUSD[ma] += costUSD
+	foldFlow(m.flows, app, up, 0, 0, costUSD)
 	if isErr {
 		m.errors[ma+"|"+endpoint]++
 	}
@@ -258,7 +311,7 @@ func (m *Metrics) RecordAudio(clientModel, upstreamModel, app, endpoint string, 
 	})
 
 	if chars > 0 || costUSD > 0 {
-		governor.RecordAudio(app, upstreamModel, chars, costUSD)
+		governor.RecordAudio(app, upstreamModel, chars, costUSD, up)
 	}
 }
 

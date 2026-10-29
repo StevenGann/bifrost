@@ -220,7 +220,7 @@ func handleOpenAISpeech(w http.ResponseWriter, r *http.Request, cfg Config) {
 		if ue, ok := err.(*upstreamError); ok && ue.status > 0 {
 			status = ue.status
 		}
-		metrics.Record(req.Model, lastUpstream, app, "/v1/audio/speech", status, 0, 0, time.Since(start), true)
+		metrics.Record(req.Model, lastUpstream, app, "/v1/audio/speech", status, 0, 0, time.Since(start), true, Served{})
 		writeJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
@@ -232,12 +232,12 @@ func handleOpenAISpeech(w http.ResponseWriter, r *http.Request, cfg Config) {
 	}
 	w.WriteHeader(http.StatusOK)
 	if _, err := io.Copy(w, resp.Body); err != nil {
-		metrics.Record(req.Model, lastUpstream, app, "/v1/audio/speech", 499, 0, 0, time.Since(start), true)
+		metrics.Record(req.Model, lastUpstream, app, "/v1/audio/speech", 499, 0, 0, time.Since(start), true, Served{})
 		return
 	}
 	chars := len([]rune(input))
 	metrics.RecordAudio(usedRoute, lastUpstream, app, "/v1/audio/speech", 200, chars,
-		float64(chars)*cfg.TTSCostPerChar, time.Since(start), false)
+		float64(chars)*cfg.TTSCostPerChar, time.Since(start), false, Served{})
 }
 
 // attemptSpeech tries the requested route, then the configured fallback route
