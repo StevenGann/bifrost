@@ -16,6 +16,16 @@ import (
 type ctxKey string
 
 const appCtxKey ctxKey = "bifrost-app"
+const identityCtxKey ctxKey = "bifrost-identity"
+
+// Identity is who is calling: a named tenant backed by a key, or an anonymous
+// caller with no credential.
+type Identity struct {
+	Name  string // label used in metrics, the ledger and per-app budgets
+	KeyID string // "" when anonymous or when the caller used a legacy header
+	Anon  bool
+	Addr  string // source IP, used to bucket anonymous rate limits
+}
 
 // limitError is a governance refusal (auth, rate limit, or budget).
 type limitError struct {
@@ -56,6 +66,7 @@ func (b *tokenBucket) allow() bool {
 type ledgerLine struct {
 	Ts    string  `json:"ts"`
 	App   string  `json:"app"`
+	Key   string  `json:"key,omitempty"`
 	Model string  `json:"model"`
 	Cost  float64 `json:"cost"`
 	Chars int     `json:"chars,omitempty"`
@@ -68,12 +79,20 @@ type Governor struct {
 	path       string
 	budget     float64
 	appBudgets map[string]float64
-	keys       map[string]string // bearer key -> app
 	rateLimit  int
 	buckets    map[string]*tokenBucket
 	month      string
 	monthSpend map[string]float64
 	monthTotal float64
+
+	// Tenant registry. Keys are minted here; APP_KEYS entries are imported as
+	// static keys so existing deployments keep working.
+	store      *keyStore
+	storeErr   error
+	adminKey   string
+	anon       string // "open", "limited" or "closed"
+	anonRate   int
+	anonBudget float64
 }
 
 // governor is the package-level enforcer, a no-op default here, replaced by
@@ -85,17 +104,34 @@ func newGovernor(cfg Config) *Governor {
 		path:       cfg.LedgerFile,
 		budget:     cfg.Budget,
 		appBudgets: cfg.AppBudgets,
-		keys:       map[string]string{},
 		rateLimit:  cfg.RateLimit,
 		buckets:    map[string]*tokenBucket{},
 		month:      monthKey(time.Now()),
 		monthSpend: map[string]float64{},
+		adminKey:   cfg.AdminKey,
+		anon:       cfg.Anon,
+		anonRate:   cfg.AnonRate,
+		anonBudget: cfg.AnonBudget,
 	}
-	// APP_KEYS is declared app->key; invert to key->app for O(1) lookup.
-	for app, key := range cfg.AppKeys {
-		if key != "" {
-			g.keys[key] = app
+	if g.anon == "" {
+		// Turn on keys and you have opted into authentication; a keyless
+		// deployment keeps the old permissive behaviour.
+		if len(cfg.AppKeys) > 0 || cfg.KeysFile != "" {
+			g.anon = "closed"
+		} else {
+			g.anon = "open"
 		}
+	}
+	store, err := newKeyStore(cfg.KeysFile)
+	if err != nil {
+		// Keep serving, but deny: a corrupt registry must not become a policy
+		// that lets everyone in. main() refuses to start on this error.
+		g.storeErr = err
+		store, _ = newKeyStore("")
+	}
+	g.store = store
+	for app, key := range cfg.AppKeys {
+		g.store.addStatic(app, key)
 	}
 	g.load()
 	return g
@@ -133,25 +169,28 @@ func monthOf(ts string) string {
 	return monthKey(t)
 }
 
-// Authenticate resolves the caller's app identity. When APP_KEYS is configured
-// a Bearer token is required; otherwise the self-reported X-Bifrost-App header
-// is used (spoofable, but backward-compatible).
-func (g *Governor) Authenticate(r *http.Request) (string, error) {
-	if len(g.keys) == 0 {
-		if a := strings.TrimSpace(r.Header.Get("X-Bifrost-App")); a != "" {
-			return a, nil
+// Authenticate resolves who is calling. A presented token must be valid: a
+// wrong key is an error, never a silent downgrade to anonymous.
+func (g *Governor) Authenticate(r *http.Request) (Identity, error) {
+	if token := bearerToken(r); token != "" {
+		k, err := g.store.lookup(token)
+		if err != nil {
+			return Identity{}, &limitError{401, "invalid bearer token"}
 		}
-		return "unknown", nil
+		g.store.touch(k.ID)
+		return Identity{Name: k.Name, KeyID: k.ID}, nil
 	}
-	token := bearerToken(r)
-	if token == "" {
-		return "", &limitError{401, "missing bearer token"}
+	if g.anon == "closed" {
+		return Identity{}, &limitError{401, "bearer token required"}
 	}
-	app, ok := g.keys[token]
-	if !ok {
-		return "", &limitError{401, "invalid bearer token"}
+	// With no keys minted at all, X-Bifrost-App is still honoured as a label so
+	// a keyless deployment behaves exactly as it did before 0.18.
+	if g.store.count() == 0 {
+		if a := strings.TrimSpace(r.Header.Get("X-Bifrost-App")); a != "" {
+			return Identity{Name: a}, nil
+		}
 	}
-	return app, nil
+	return Identity{Name: "anonymous", Anon: true, Addr: clientIP(r)}, nil
 }
 
 func bearerToken(r *http.Request) string {
@@ -162,28 +201,56 @@ func bearerToken(r *http.Request) string {
 	return ""
 }
 
-// Check enforces the rate limit and monthly budget for app.
-func (g *Governor) Check(app string) error {
+// Check enforces the rate limit and monthly budget for the calling identity.
+// A key carries its own limits; anonymous callers get theirs from ANON_*.
+func (g *Governor) Check(id Identity) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.rolloverLocked()
 
-	if g.rateLimit > 0 {
-		b := g.buckets[app]
-		if b == nil {
-			b = newTokenBucket(float64(g.rateLimit))
-			g.buckets[app] = b
+	rate := g.rateLimit
+	budget := g.budget
+	appBudget := g.appBudgets[id.Name]
+
+	if id.Anon {
+		if g.anonRate > 0 {
+			rate = g.anonRate
 		}
-		if !b.allow() {
-			return &limitError{429, fmt.Sprintf("rate limit exceeded for app %q", app)}
+		if g.anonBudget > 0 {
+			appBudget = g.anonBudget
+		}
+	} else if k := g.store.get(id.KeyID); k != nil {
+		if k.RateLimit > 0 {
+			rate = k.RateLimit
+		}
+		if k.Budget > 0 {
+			appBudget = k.Budget
 		}
 	}
 
-	if g.budget > 0 && g.monthTotal >= g.budget {
-		return &limitError{402, fmt.Sprintf("monthly budget $%.2f exceeded", g.budget)}
+	if rate > 0 {
+		bucket := id.KeyID
+		if bucket == "" {
+			bucket = "name:" + id.Name
+		}
+		if id.Anon {
+			bucket = "anon:" + id.Addr
+		}
+		b := g.buckets[bucket]
+		if b == nil {
+			b = newTokenBucket(float64(rate))
+			g.buckets[bucket] = b
+		}
+		if !b.allow() {
+			return &limitError{429, fmt.Sprintf("rate limit exceeded for %q", id.Name)}
+		}
 	}
-	if b, ok := g.appBudgets[app]; ok && b > 0 && g.monthSpend[app] >= b {
-		return &limitError{402, fmt.Sprintf("app %q budget $%.2f exceeded", app, b)}
+
+	if budget > 0 && g.monthTotal >= budget {
+		return &limitError{402, fmt.Sprintf("monthly budget $%.2f exceeded", budget)}
+	}
+	if appBudget > 0 && g.monthSpend[id.Name] >= appBudget {
+		return &limitError{402, fmt.Sprintf("%q budget $%.2f exceeded", id.Name, appBudget)}
 	}
 	return nil
 }
@@ -214,7 +281,7 @@ func (g *Governor) appendAudioLocked(app, model string, chars int, cost float64)
 	if g.path == "" {
 		return
 	}
-	b, err := json.Marshal(ledgerLine{Ts: time.Now().UTC().Format(time.RFC3339), App: app, Model: model, Cost: cost, Chars: chars})
+	b, err := json.Marshal(ledgerLine{Ts: time.Now().UTC().Format(time.RFC3339), App: app, Key: g.store.idForName(app), Model: model, Cost: cost, Chars: chars})
 	if err != nil {
 		return
 	}
@@ -242,7 +309,7 @@ func (g *Governor) appendLocked(app, model string, cost float64) {
 	if g.path == "" {
 		return
 	}
-	b, err := json.Marshal(ledgerLine{Ts: time.Now().UTC().Format(time.RFC3339), App: app, Model: model, Cost: cost})
+	b, err := json.Marshal(ledgerLine{Ts: time.Now().UTC().Format(time.RFC3339), App: app, Key: g.store.idForName(app), Model: model, Cost: cost})
 	if err != nil {
 		return
 	}
@@ -258,28 +325,31 @@ func (g *Governor) appendLocked(app, model string, cost float64) {
 }
 
 // Wrap guards a completion handler with auth, rate-limit, and budget checks,
-// and makes the authenticated app available to the handler via context.
+// and makes the authenticated identity available to the handler via context.
 func (g *Governor) Wrap(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		app, err := g.Authenticate(r)
+		id, err := g.Authenticate(r)
 		if err != nil {
-			if app == "" {
-				app = "unknown"
+			status := 401
+			if le, ok := err.(*limitError); ok {
+				status = le.Status()
 			}
-			metrics.Record(app, app, app, r.URL.Path, 401, 0, 0, time.Since(start), true)
-			writeJSON(w, 401, map[string]string{"error": err.Error()})
+			metrics.Record("unauthorized", "unauthorized", "unauthorized", r.URL.Path, status, 0, 0, time.Since(start), true)
+			writeJSON(w, status, map[string]string{"error": err.Error()})
 			return
 		}
-		if err := g.Check(app); err != nil {
+		if err := g.Check(id); err != nil {
 			status := 500
 			if le, ok := err.(*limitError); ok {
 				status = le.Status()
 			}
-			metrics.Record(app, app, app, r.URL.Path, status, 0, 0, time.Since(start), true)
+			metrics.Record(id.Name, id.Name, id.Name, r.URL.Path, status, 0, 0, time.Since(start), true)
 			writeJSON(w, status, map[string]string{"error": err.Error()})
 			return
 		}
-		next(w, r.WithContext(context.WithValue(r.Context(), appCtxKey, app)))
+		ctx := context.WithValue(r.Context(), appCtxKey, id.Name)
+		ctx = context.WithValue(ctx, identityCtxKey, id)
+		next(w, r.WithContext(ctx))
 	}
 }

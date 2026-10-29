@@ -32,17 +32,24 @@ type Route struct {
 }
 
 type Config struct {
-	Port              string
-	Backends          map[string]Backend
-	Default           string
-	Routes            map[string]Route
-	Retries           int
-	Fallbacks         map[string]string
-	Budget            float64
-	AppBudgets        map[string]float64
-	AppKeys           map[string]string
-	RateLimit         int
-	LedgerFile        string
+	Port       string
+	Backends   map[string]Backend
+	Default    string
+	Routes     map[string]Route
+	Retries    int
+	Fallbacks  map[string]string
+	Budget     float64
+	AppBudgets map[string]float64
+	AppKeys    map[string]string
+	RateLimit  int
+	LedgerFile string
+	// Tenant keys. KeysFile is where minted keys live; AdminKey authorises the
+	// /admin/keys API. Anon is "open", "limited" or "closed".
+	KeysFile          string
+	AdminKey          string
+	Anon              string
+	AnonRate          int
+	AnonBudget        float64
 	CacheTTL          int
 	CacheMax          int
 	CircuitThreshold  int
@@ -187,6 +194,11 @@ func loadConfig() Config {
 		AppKeys:           map[string]string{},
 		RateLimit:         envInt("RATE_LIMIT", 0),
 		LedgerFile:        envOr("LEDGER_FILE", ""),
+		KeysFile:          envOr("KEYS_FILE", ""),
+		AdminKey:          envOr("ADMIN_KEY", ""),
+		Anon:              envOr("ANON", ""),
+		AnonRate:          envInt("ANON_RATE_LIMIT", 0),
+		AnonBudget:        envFloat("ANON_BUDGET", 0),
 		CacheTTL:          envInt("CACHE_TTL", 300),
 		CacheMax:          envInt("CACHE_MAX", 256),
 		CircuitThreshold:  envInt("CIRCUIT_THRESHOLD", 3),
@@ -380,6 +392,9 @@ func main() {
 	cfg := loadConfig()
 	metrics = newMetrics(loadPricing())
 	governor = newGovernor(cfg)
+	if governor.storeErr != nil {
+		log.Fatalf("bifrost: %v (refusing to start with an unreadable key registry)", governor.storeErr)
+	}
 	lruCache = newCacheFromConfig(cfg.CacheTTL, cfg.CacheMax)
 	circuits = newCircuits(cfg.CircuitThreshold, time.Duration(cfg.CircuitCooldown)*time.Second)
 	if cfg.SemanticCache {
@@ -390,6 +405,14 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
+
+	// Tenant key administration. Unregistered unless ADMIN_KEY is set, so the
+	// surface does not exist at all on a deployment that does not want it.
+	if cfg.AdminKey != "" {
+		mux.HandleFunc("POST /admin/keys", governor.handleAdminCreate)
+		mux.HandleFunc("GET /admin/keys", governor.handleAdminList)
+		mux.HandleFunc("DELETE /admin/keys/{id}", governor.handleAdminRevoke)
+	}
 
 	// Ollama-native API
 	mux.HandleFunc("GET /api/tags", func(w http.ResponseWriter, r *http.Request) { handleTags(w, cfg) })

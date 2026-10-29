@@ -10,12 +10,12 @@ import (
 
 func TestGovernorBudget(t *testing.T) {
 	g := newGovernor(Config{Budget: 1.0})
-	if err := g.Check("jeeves"); err != nil {
+	if err := g.Check(Identity{Name: "jeeves"}); err != nil {
 		t.Fatalf("expected under budget, got %v", err)
 	}
 	g.Record("jeeves", "deepseek-v4-flash", 0.6)
 	g.Record("jeeves", "deepseek-v4-flash", 0.5) // total 1.1 > 1.0
-	if err := g.Check("jeeves"); err == nil {
+	if err := g.Check(Identity{Name: "jeeves"}); err == nil {
 		t.Fatal("expected over-budget refusal")
 	} else if le, ok := err.(*limitError); !ok || le.Status() != 402 {
 		t.Fatalf("expected 402 limitError, got %v", err)
@@ -25,22 +25,22 @@ func TestGovernorBudget(t *testing.T) {
 func TestGovernorPerAppBudget(t *testing.T) {
 	g := newGovernor(Config{AppBudgets: map[string]float64{"patzer": 0.5}})
 	g.Record("patzer", "deepseek-v4-flash", 0.5)
-	if err := g.Check("patzer"); err == nil {
+	if err := g.Check(Identity{Name: "patzer"}); err == nil {
 		t.Fatal("expected patzer over its per-app budget")
 	} else if le, ok := err.(*limitError); !ok || le.Status() != 402 {
 		t.Fatalf("expected 402, got %v", err)
 	}
-	if err := g.Check("jeeves"); err != nil {
+	if err := g.Check(Identity{Name: "jeeves"}); err != nil {
 		t.Fatalf("jeeves should be unaffected: %v", err)
 	}
 }
 
 func TestGovernorRateLimit(t *testing.T) {
 	g := newGovernor(Config{RateLimit: 1})
-	if err := g.Check("jeeves"); err != nil {
+	if err := g.Check(Identity{Name: "jeeves"}); err != nil {
 		t.Fatalf("first request should pass: %v", err)
 	}
-	if err := g.Check("jeeves"); err == nil {
+	if err := g.Check(Identity{Name: "jeeves"}); err == nil {
 		t.Fatal("second request should be rate-limited")
 	} else if le, ok := err.(*limitError); !ok || le.Status() != 429 {
 		t.Fatalf("expected 429, got %v", err)
@@ -52,8 +52,8 @@ func TestGovernorAuth(t *testing.T) {
 
 	r := httptest.NewRequest("POST", "/api/chat", nil)
 	r.Header.Set("Authorization", "Bearer key-abc")
-	if app, err := g.Authenticate(r); err != nil || app != "jeeves" {
-		t.Fatalf("got app=%q err=%v", app, err)
+	if id, err := g.Authenticate(r); err != nil || id.Name != "jeeves" || id.KeyID == "" {
+		t.Fatalf("got id=%+v err=%v", id, err)
 	}
 
 	if _, err := g.Authenticate(httptest.NewRequest("POST", "/api/chat", nil)); err == nil {
@@ -72,8 +72,8 @@ func TestGovernorAuth(t *testing.T) {
 	g2 := newGovernor(Config{})
 	r4 := httptest.NewRequest("POST", "/api/chat", nil)
 	r4.Header.Set("X-Bifrost-App", "patzer")
-	if app, err := g2.Authenticate(r4); err != nil || app != "patzer" {
-		t.Fatalf("header fallback: app=%q err=%v", app, err)
+	if id, err := g2.Authenticate(r4); err != nil || id.Name != "patzer" {
+		t.Fatalf("header fallback: id=%+v err=%v", id, err)
 	}
 }
 

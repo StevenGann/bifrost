@@ -69,8 +69,15 @@ got.
   appears as a chat model in `/v1/models`; `FALLBACKS` covers a dead voice the
   way it covers a dead chat backend. Speech bills per character, so the ledger
   line gained a `chars` field and the dashboard a "chars spoken" total.
+- **Tenant keys (v0.18):** Bifrost mints its own client keys into `KEYS_FILE`,
+  storing only their SHA-256. A key carries its own monthly budget and rate
+  limit, its last-used stamp, and can be revoked without a restart; the admin
+  surface is `/admin/keys`, unregistered unless `ADMIN_KEY` is set. Anonymous
+  callers are a policy (`ANON` = `open`/`limited`/`closed`), and when limited
+  they get a per-source-IP rate limit plus a shared monthly cap. `APP_KEYS`
+  imports as static keys, and each ledger line now carries `key` beside `app`.
 - Single static binary, stdlib-only; the only state is an optional spend ledger
-  file.
+  file and an optional key registry.
 
 ## Initiatives (priority order)
 
@@ -160,6 +167,26 @@ Bifrost rotates across them (weighted round-robin) and, on a `429`/`401`/`403`,
 cools the offending key and transparently retries the next one — before backend
 failover applies. Keys live in a SOPS-encrypted Secret (`KEYPOOL`), never in a
 ConfigMap or the repo. Per-key cost/plan accounting is a follow-up.
+
+### 11. Tenant keys and attribution — ✅ shipped (v0.18)
+
+Keys are minted by Bifrost, not written by hand: `POST /admin/keys` returns the
+secret once and stores only its SHA-256 in `KEYS_FILE`. Each key is a tenant —
+its own monthly budget and rate limit, its own `last_used`, its own `spend_month`
+in `GET /admin/keys`, revocable with `DELETE /admin/keys/{id}` without a restart
+(revocation is soft, so ledger history still resolves).
+
+**Decision:** a key is the tenant, and its name is the `app` label used
+everywhere else. That keeps budgets, metrics and the dashboard working unchanged
+while making the identity unspoofable, instead of inventing a second attribution
+axis beside `app`.
+
+**Decision:** anonymous callers are a policy, not an accident. `ANON=open`
+preserves the keyless behaviour, `limited` admits them but applies
+`ANON_RATE_LIMIT` *per source IP* (one abuser must not starve every other
+anonymous client) and `ANON_BUDGET` as a shared monthly cap, and `closed`
+refuses. Turning on `KEYS_FILE` or `APP_KEYS` defaults to `closed`; a presented
+but invalid key is always `401` and never falls through to anonymous.
 
 ## Non-goals
 

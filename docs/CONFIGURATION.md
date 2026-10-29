@@ -23,7 +23,12 @@ Secret, Docker secret), never in a ConfigMap or the repo.
 | `BUDGET` | Monthly spend cap in USD (default `0` = unlimited) — over budget → `402` |
 | `APP_BUDGETS` | JSON `{"app":usd}` per-app monthly cap |
 | `RATE_LIMIT` | Per-app requests/minute (default `0` = unlimited) — exceeded → `429` |
-| `APP_KEYS` | JSON `{"app":"bearer-key"}` — when set, requires a valid key (else `401`) |
+| `APP_KEYS` | JSON `{"app":"bearer-key"}` — imported as **static** tenant keys; when set, requires a valid key (else `401`) |
+| `KEYS_FILE` | Path to the tenant key registry (e.g. `/data/keys.json`). Bifrost mints keys here; only SHA-256 hashes are stored |
+| `ADMIN_KEY` | Bearer token that authorises `/admin/keys`. Unset = the admin API does not exist |
+| `ANON` | `open` (default with no keys), `limited` (anonymous allowed, subject to `ANON_*`), or `closed` (default once `KEYS_FILE`/`APP_KEYS` is set) |
+| `ANON_RATE_LIMIT` | Requests/minute per source IP for anonymous callers (default `0` = unlimited) |
+| `ANON_BUDGET` | Monthly USD cap across all anonymous callers (default `0` = unlimited) |
 | `LEDGER_FILE` | Path to the JSONL spend ledger (e.g. `/data/spend.jsonl`) |
 | `CACHE_TTL` | Exact-match cache TTL in seconds (default `300`; `0` disables) |
 | `CACHE_MAX` | Max cached entries (default `256`) |
@@ -67,6 +72,55 @@ of backend name → key list:
 - `id`/`plan` are labels for observability; tracked as
   `bifrost_key_rotations_total{backend}`.
 - No `KEYPOOL` → the single `api_key_env` key is used unchanged.
+
+## Tenant keys
+
+Bifrost can mint its own client keys and use them as the unit of attribution and
+policy. Set `KEYS_FILE` to a writable path and `ADMIN_KEY` to a secret you keep
+out of the config:
+
+```bash
+KEYS_FILE=/data/keys.json
+ADMIN_KEY=<long random string, kept in a secret>
+ANON=closed          # optional: refuse callers with no key
+```
+
+Mint one per client:
+
+```bash
+curl -sS -X POST http://gateway:11434/admin/keys \
+  -H "Authorization: Bearer $ADMIN_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"hermes","budget":5,"rate_limit":120}'
+```
+
+```json
+{"id":"a1b2c3d4","name":"hermes","key":"bk_a1b2c3d4_…","created":"…","notice":"this is the only time the key is shown"}
+```
+
+- The key is returned **once**. Only its SHA-256 is stored, so the keys file
+  cannot be used to authenticate.
+- `GET /admin/keys` lists keys with `created`, `last_used`, `revoked`,
+  `spend_month` and `budget` — never secret material.
+- `DELETE /admin/keys/{id}` revokes. The record is kept so ledger history still
+  resolves to the right tenant.
+- Per-key `budget` (USD/month) and `rate_limit` (req/min) override the global
+  defaults for that tenant. `BUDGET` remains a ceiling over everything.
+- Every ledger line carries `app` (tenant name) and `key` (key id).
+- The admin API is **not registered** unless `ADMIN_KEY` is set.
+
+### Anonymous callers
+
+`ANON` decides what happens with no token:
+
+- `open` — admitted, attributed to `anonymous`. The default when no keys are
+  configured, so a keyless deployment behaves as it always did.
+- `limited` — admitted, but `ANON_RATE_LIMIT` applies **per source IP** and
+  `ANON_BUDGET` caps anonymous spend per month across all callers.
+- `closed` — `401`. The default once `KEYS_FILE` or `APP_KEYS` is set.
+
+A token that is *presented but invalid* is always a `401`. A wrong key never
+degrades silently into anonymous access.
 
 ## Single upstream (legacy)
 

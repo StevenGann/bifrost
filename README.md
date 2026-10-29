@@ -110,10 +110,17 @@ feature that doesn't serve one of these is scope, not progress.
 
 ### Governance and observability
 
+- **Tenant keys** — Bifrost mints its own client keys (`POST /admin/keys`) and
+  keeps only their SHA-256, so a stolen key file cannot authenticate. Each key
+  carries its own monthly budget and rate limit, its own spend and last-used
+  stamp, and can be revoked without a restart. Anonymous callers are a policy
+  choice: `open`, `limited` (per-IP rate limit plus a shared monthly cap) or
+  `closed`. Every ledger line records both the tenant and the key that spent it.
 - **Budgets** — hard monthly limits, global (`BUDGET`) and per app
   (`APP_BUDGETS`), backed by a durable JSONL ledger so they survive restarts.
   Over budget → `402`, rate-limited → `429`, unauthenticated → `401`.
-- **Per-app auth and rate limits** — `APP_KEYS` and `RATE_LIMIT`.
+- **Per-app auth and rate limits** — `APP_KEYS` (imported as static tenant keys)
+  and `RATE_LIMIT`.
 - **Ledger** — every request appends tokens, cost and characters
   (`LEDGER_FILE`), which is what makes spend attributable rather than guessed.
 - **Metrics** — Prometheus `/metrics` with tokens, cost, latency, errors,
@@ -143,12 +150,11 @@ feature that doesn't serve one of these is scope, not progress.
 Roughly in priority order. Everything is an increment on the above, not a
 rewrite.
 
-- **Trustworthy attribution** — per-tenant keys with revocation. Today
-  `X-Bifrost-App` is a label and `APP_KEYS` a static map; that's fine for one
-  operator and not fine for anyone whose money is being spent.
 - **More vendor dialects behind `kind`** — a native Anthropic backend is the
   next one, so Claude is a route entry rather than a proxy.
-- **Per-key accounting** — spend broken out by key and plan, not just by app.
+- **Per-plan accounting** — spend broken out by the key pool's `plan` label, so
+  "this month ran on the off-peak key" is a number rather than an inference.
+  Per-tenant spend already appears in `/admin/keys`.
 - **Portability** — a compose example and docs that assume nothing about our
   cluster, so "runs elsewhere" is a tested path rather than a hope.
 
