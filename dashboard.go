@@ -413,14 +413,9 @@ a{color:#7fd4ff}
     // A narrow screen has little horizontal room, so give the diagram more
     // height instead: ribbons stay traceable when they are not squashed.
     var H = W < 520 ? 520 : 400;
-    // Budget the margins from the longest label rather than guessing: the
-    // value sits beside the name, so a long backend name must not clip.
-    var CH = 8.3, VAL = 58, PAD = 14;
-    var M = {
-      left: Math.min(280, PAD + (d3.max(clients, function (c) { return c.length; }) || 0) * CH + VAL),
-      right: Math.min(300, PAD + (d3.max(ups, function (u) { return u.length; }) || 0) * CH + VAL),
-      top: 14, bottom: 14
-    };
+    // Below this width a name and a value do not both fit; the value lives in
+    // the tooltip and in the table, and the ribbon already encodes it.
+    var narrow = W < 560;
 
     box.innerHTML = "";
     var cap = document.createElement("div");
@@ -436,61 +431,97 @@ a{color:#7fd4ff}
       .attr("role", "img")
       .attr("aria-label", "sankey diagram of clients to upstreams");
 
-    var layout = d3.sankey()
-      .nodeWidth(9)
-      .nodePadding(16)
-      .extent([[M.left, M.top], [W - M.right, H - M.bottom]])
-      ({
-        nodes: nodes.map(function (d) { return Object.assign({}, d); }),
-        links: links.map(function (d) { return Object.assign({}, d); })
-      });
-
     var color = d3.scaleOrdinal().domain(clients).range(d3.schemeTableau10);
 
-    svg.append("g")
-      .attr("fill", "none")
-      .selectAll("path")
-      .data(layout.links)
-      .join("path")
-      .attr("d", d3.sankeyLinkHorizontal())
-      .attr("stroke", function (d) { return color(d.source.name); })
-      // A free request still flows but carries no money: draw it as a hairline
-      // so the ribbon width keeps meaning cost.
-      .attr("stroke-width", function (d) { return d.flow && weight(d.flow) > 0 ? Math.max(1.5, d.width) : 1; })
-      .attr("stroke-opacity", function (d) { return d.flow && weight(d.flow) > 0 ? 0.45 : 0.15; })
-      .append("title")
-      .text(function (d) {
-        return d.source.name + " → " + d.target.name + ": " +
-               (useCost ? money(d.flow.CostUSD) : num(d.flow.Requests) + " requests");
+    function draw(M, nameCap) {
+      svg.selectAll("*").remove();
+
+      var layout = d3.sankey()
+        .nodeWidth(9)
+        .nodePadding(16)
+        .extent([[M.left, M.top], [W - M.right, H - M.bottom]])
+        ({
+          nodes: nodes.map(function (d) { return Object.assign({}, d); }),
+          links: links.map(function (d) { return Object.assign({}, d); })
+        });
+
+      svg.append("g")
+        .attr("fill", "none")
+        .selectAll("path")
+        .data(layout.links)
+        .join("path")
+        .attr("d", d3.sankeyLinkHorizontal())
+        .attr("stroke", function (d) { return color(d.source.name); })
+        // A free request still flows but carries no money: draw it as a hairline
+        // so the ribbon width keeps meaning cost.
+        .attr("stroke-width", function (d) { return d.flow && weight(d.flow) > 0 ? Math.max(1.5, d.width) : 1; })
+        .attr("stroke-opacity", function (d) { return d.flow && weight(d.flow) > 0 ? 0.45 : 0.15; })
+        .append("title")
+        .text(function (d) {
+          return d.source.name + " → " + d.target.name + ": " +
+                 (useCost ? shortMoney(d.flow.CostUSD) : num(d.flow.Requests) + " requests");
+        });
+
+      var g = svg.append("g").selectAll("g").data(layout.nodes).join("g");
+
+      g.append("rect")
+        .attr("x", function (d) { return d.x0; })
+        .attr("y", function (d) { return d.y0; })
+        .attr("width", function (d) { return d.x1 - d.x0; })
+        .attr("height", function (d) { return Math.max(1, d.y1 - d.y0); })
+        .attr("rx", 1.5)
+        .attr("fill", function (d) { return d.side === "client" ? color(d.name) : "#5d6f80"; })
+        .append("title")
+        .text(function (d) { return d.name; });
+
+      var label = g.append("text")
+        .attr("x", function (d) { return d.side === "client" ? d.x0 - 8 : d.x1 + 8; })
+        .attr("y", function (d) { return (d.y0 + d.y1) / 2; })
+        .attr("dy", "0.35em")
+        .attr("text-anchor", function (d) { return d.side === "client" ? "end" : "start"; });
+      label.append("tspan").text(function (d) {
+        return d.name.length > nameCap ? d.name.slice(0, nameCap - 1) + "\u2026" : d.name;
       });
+      if (!narrow) {
+        label.append("tspan")
+          .attr("class", "val")
+          .attr("dx", 6)
+          .text(function (d) { return fmt(d.total); });
+      }
+    }
 
-    var g = svg.append("g")
-      .selectAll("g")
-      .data(layout.nodes)
-      .join("g");
+    // Draw, measure what the labels actually need, then redraw inside margins
+    // that fit. Guessing character widths clipped real labels twice; on a
+    // narrow screen the answer is shorter names, not a squashed chart.
+    var M = { left: 130, right: 150, top: 14, bottom: 14 };
+    var limit = Math.round(W * 0.42);
+    var caps = [26, 20, 14, 10];
 
-    g.append("rect")
-      .attr("x", function (d) { return d.x0; })
-      .attr("y", function (d) { return d.y0; })
-      .attr("width", function (d) { return d.x1 - d.x0; })
-      .attr("height", function (d) { return Math.max(1, d.y1 - d.y0); })
-      .attr("rx", 1.5)
-      .attr("fill", function (d) { return d.side === "client" ? color(d.name) : "#5d6f80"; })
-      .append("title")
-      .text(function (d) { return d.name; });
+    for (var ci = 0; ci < caps.length; ci++) {
+      draw(M, caps[ci]);
 
-    var label = g.append("text")
-      .attr("x", function (d) { return d.side === "client" ? d.x0 - 8 : d.x1 + 8; })
-      .attr("y", function (d) { return (d.y0 + d.y1) / 2; })
-      .attr("dy", "0.35em")
-      .attr("text-anchor", function (d) { return d.side === "client" ? "end" : "start"; });
-    // A very long backend name would either clip or squeeze the chart; shorten
-    // it on the canvas and keep the full name in the tooltip.
-    label.append("tspan").text(function (d) { return d.name.length > 26 ? d.name.slice(0, 25) + "\u2026" : d.name; });
-    label.append("tspan")
-      .attr("class", "val")
-      .attr("dx", 6)
-      .text(function (d) { return fmt(d.total); });
+      var widestLeft = 0, widestRight = 0;
+      svg.selectAll("text").nodes().forEach(function (t) {
+        var w = t.getComputedTextLength();
+        if (t.getAttribute("text-anchor") === "end") { widestLeft = Math.max(widestLeft, w); }
+        else { widestRight = Math.max(widestRight, w); }
+      });
+      var needL = Math.ceil(widestLeft) + 16, needR = Math.ceil(widestRight) + 16;
+
+      if (needL <= limit && needR <= limit) {
+        if (needL > M.left + 1 || needR > M.right + 1) {
+          M.left = Math.max(M.left, needL);
+          M.right = Math.max(M.right, needR);
+          draw(M, caps[ci]);
+        }
+        break;
+      }
+      if (ci === caps.length - 1) {
+        M.left = Math.min(M.left, limit);
+        M.right = Math.min(M.right, limit);
+        draw(M, caps[ci]);
+      }
+    }
   }
 
   function apply(d) {
