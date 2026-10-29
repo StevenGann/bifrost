@@ -2,13 +2,11 @@
 
 ## Vision
 
-Bifrost is the homelab's **LLM control plane** — the one door every app and agent
-knocks on, which decides *which brain* to route to (cloud or local), keeps private
-data private, and tells you what it's all costing.
-
-It is the AI mirror of what Heimdall already is at the network edge. Right now
-Bifrost is a thin shim that makes DeepSeek look like a local Ollama; the roadmap
-below turns it into a bridge with a real decision layer.
+Bifrost is the one door every app and agent knocks on: it decides which model a
+request reaches, keeps private data on the network, absorbs the failure of
+anything behind it, and reports what each caller spent. The objectives in the
+README are the contract; this document tracks how far the implementation has
+got.
 
 ## Current state
 
@@ -19,10 +17,14 @@ below turns it into a bridge with a real decision layer.
 - Model aliasing (`coach` → `deepseek-v4-flash`).
 - **Privacy (v0.5):** PII redaction (emails, phones, cards, SSNs, IPs, keys) on
   all cloud-bound traffic; local backends skip it.
-- **Observability (v0.2–v0.3):** Prometheus `/metrics` — request counts, token in/out,
-  estimated cost (cache-miss rates, peak/off-peak aware), latency histogram, and
-  error counts, labeled by model and app (`X-Bifrost-App` header) — plus a bespoke
-  live HTML dashboard at `/` (zero-JS, server-rendered).
+- **Observability (v0.2–v0.3, extended v0.17):** Prometheus `/metrics` — request
+  counts, token in/out, estimated cost (cache-miss rates, peak/off-peak aware),
+  latency histogram, and error counts, labeled by model and app (`X-Bifrost-App`
+  header) — plus a live dashboard at `/dashboard`. The page is drawn
+  client-side: the server ships a snapshot inside the HTML for an instant first
+  paint, then the page polls `/dashboard.json` every two seconds and patches the
+  DOM in place. One renderer, no reloads, no lost scroll position, and a label
+  pair per cell so it re-lays-out as cards on a phone.
 - **Governance (v0.7):** hard monthly budgets (global `BUDGET` + per-app
   `APP_BUDGETS`), per-app rate limits (`RATE_LIMIT`), and optional per-app bearer
   auth (`APP_KEYS`) — backed by a durable JSONL spend ledger (`LEDGER_FILE`) so
@@ -32,7 +34,7 @@ below turns it into a bridge with a real decision layer.
   idempotent re-sends) skip the upstream call entirely (zero cost, zero latency).
   Bounded LRU + TTL, in-memory only; hit-rate surfaced on the dashboard.
 - **Embeddings (v0.9):** Ollama-native + OpenAI-compatible embeddings endpoints,
-  routed to any backend holding an embedding model (e.g. Epsilon's
+  routed to any backend holding an embedding model (e.g. a local
   `nomic-embed-text`). Upstream calls standardized on `/v1/*` paths.
 - **Circuit breaker (v0.10):** per-backend breaker — after `CIRCUIT_THRESHOLD`
   consecutive failures, fail fast (503) instead of hanging on a downed backend;
@@ -61,8 +63,14 @@ below turns it into a bridge with a real decision layer.
   them (weighted round-robin) and transparently fails over to the next key on a
   `429`/`401`/`403`, cooling the rate-limited key before backend failover
   applies. Tracked as `bifrost_key_rotations_total`.
-- Single static binary, stdlib-only, deployed on Hyperion at `bifrost.lab:11434`;
-  the only state is an optional spend ledger file.
+- **Speech (v0.17):** `POST /v1/audio/speech` in the OpenAI shape, in front of any
+  voice backend — the backend's `kind` selects the wire dialect (`openai` or
+  `elevenlabs`). Audio routes live in `AUDIO_ROUTES` so a voice target never
+  appears as a chat model in `/v1/models`; `FALLBACKS` covers a dead voice the
+  way it covers a dead chat backend. Speech bills per character, so the ledger
+  line gained a `chars` field and the dashboard a "chars spoken" total.
+- Single static binary, stdlib-only; the only state is an optional spend ledger
+  file.
 
 ## Initiatives (priority order)
 
@@ -70,7 +78,7 @@ below turns it into a bridge with a real decision layer.
 
 `BACKENDS` (JSON array of backends with base URL + key) + `ROUTES` (client-model →
 `backend/upstream-model`). Unknown names fall back to the default backend
-unchanged. `coach` → DeepSeek today; `private:*` → Thoth becomes a one-line
+unchanged. `coach` → DeepSeek today; a local backend becomes a one-line
 `ROUTES` entry the moment a local backend exists. Legacy `UPSTREAM_BASE_URL` /
 `MODELS` still work as a single default backend.
 
@@ -88,7 +96,7 @@ Prometheus can scrape Bifrost with zero rework on Bifrost's side.
 
 `/api/embeddings` + `/api/embed` (Ollama-native) and `/v1/embeddings`
 (OpenAI-compatible), routed to whichever backend holds an embedding model (a
-`ROUTES` entry like `embed → epsilon/nomic-embed-text`). Bifrost translates
+`ROUTES` entry like `embed → local/nomic-embed-text`). Bifrost translates
 Ollama↔OpenAI embedding shapes. Also standardized all upstream calls on the real
 OpenAI paths (`/v1/chat/completions`, `/v1/embeddings`) so Ollama, vLLM, and
 DeepSeek are all first-class backends instead of DeepSeek's `/chat/completions`
@@ -138,10 +146,12 @@ and per-1M-token pricing — so an agent can ask "what's available and what's
 right for me" instead of hardcoding a model. `/api/tags` sets `details.family`
 to the same privacy tier for Ollama clients.
 
-### 9. Retrieval endpoint ⬜ *(stretch)*
+### 9. Retrieval endpoint — ❌ dropped
 
-`/v1/retrieval` — embeddings + vector search over the vault, so agents get
-semantic search without each reimplementing it.
+Was a stretch goal: embeddings plus vector search over the vault, so agents got
+semantic search without each reimplementing it. Dropped rather than deferred. It
+needs a real vector store and a corpus-indexing lifecycle, and neither belongs in
+a single binary that holds no external state. Point agents at a real store.
 
 ### 10. Key pool — ✅ shipped (v0.16)
 
@@ -155,6 +165,10 @@ ConfigMap or the repo. Per-key cost/plan accounting is a follow-up.
 
 - **A model runner** — vLLM/llama.cpp already own that.
 - **A training pipeline.**
-- **A full vector database** — delegate to an existing store rather than embed one.
+- **A full vector database, or a retrieval endpoint that implies one** — delegate
+  to an existing store rather than embed one. (See initiative 9.)
+- **An admin UI as a product** — the dashboard is for reading, not for operating
+  a fleet of tenants. Per-tenant key management, when it lands, will be an API,
+  not a console.
 
 Bifrost stays thin: its value is the *decision layer*, not the compute.

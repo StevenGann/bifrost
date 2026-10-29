@@ -44,7 +44,7 @@ func TestRoute(t *testing.T) {
 	cfg := Config{
 		Backends: map[string]Backend{
 			"deepseek": {Name: "deepseek", BaseURL: "https://api.deepseek.com", Local: false},
-			"thoth":    {Name: "thoth", BaseURL: "http://thoth.lab:8000/v1", Local: true},
+			"thoth":    {Name: "thoth", BaseURL: "http://local.lab:8000/v1", Local: true},
 		},
 		Default: "deepseek",
 		Routes: map[string]Route{
