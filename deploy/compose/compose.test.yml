@@ -35,13 +35,20 @@ services:
       retries: 20
       start_period: 3s
     depends_on:
-      - stub
+      stub:
+        condition: service_healthy
 
   stub:
     image: python:3-alpine
     command: ["python3", "/stub-backend.py"]
     volumes:
       - ./stub-backend.py:/stub-backend.py:ro
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/')"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 2s
 
 volumes:
   data:

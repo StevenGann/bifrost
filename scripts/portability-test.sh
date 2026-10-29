@@ -17,11 +17,24 @@ OUT=$(mktemp)
 LOG=$(mktemp)
 # Everything below is tee'd so CI can publish it as a step summary.
 exec > >(tee "$LOG") 2>&1
-trap 'status_code=$?; docker compose -p "$PROJECT" -f "$COMPOSE_FILE" down -v --remove-orphans >/dev/null 2>&1 || true
+on_exit() {
+  local status_code=$?
+  if [ "$status_code" -ne 0 ]; then
+    echo "--- containers ---"; docker compose -p "$PROJECT" -f "$COMPOSE_FILE" ps -a 2>&1 || true
+    echo "--- logs ---";     docker compose -p "$PROJECT" -f "$COMPOSE_FILE" logs --tail=60 2>&1 || true
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then
+      docker compose -p "$PROJECT" -f "$COMPOSE_FILE" ps -a 2>&1 | head -20 | sed 's/^/::error title=containers::/' || true
+      docker compose -p "$PROJECT" -f "$COMPOSE_FILE" logs --tail=40 stub 2>&1 | head -40 | sed 's/^/::error title=stub::/' || true
+      docker compose -p "$PROJECT" -f "$COMPOSE_FILE" logs --tail=40 bifrost 2>&1 | head -40 | sed 's/^/::error title=bifrost::/' || true
+    fi
+  fi
+  docker compose -p "$PROJECT" -f "$COMPOSE_FILE" down -v --remove-orphans >/dev/null 2>&1 || true
   if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     { echo "### portability test (exit $status_code)"; echo "\`\`\`"; cat "$LOG"; echo "\`\`\`"; } >> "$GITHUB_STEP_SUMMARY"
   fi
-  rm -f "$OUT" "$LOG"' EXIT
+  rm -f "$OUT" "$LOG"
+}
+trap on_exit EXIT
 
 pass=0
 fail=0
