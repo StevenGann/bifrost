@@ -1,0 +1,17 @@
+Vendored so the dashboard works without a CDN and the binary stays self-contained.
+
+d3 v7.9.0        https://github.com/d3/d3            ISC
+d3-sankey v0.12.3 https://github.com/d3/d3-sankey    BSD-3-Clause
+
+d3: Copyright 2010-2023 Mike Bostock. Permission to use, copy, modify, and/or
+distribute this software for any purpose with or without fee is hereby granted,
+provided that the above copyright notice and this permission notice appear in
+all copies.
+
+d3-sankey: Copyright 2019 Mike Bostock. Redistribution and use in source and
+binary forms, with or without modification, are permitted provided that the
+copyright notice and this list of conditions are retained. THIS SOFTWARE IS
+PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR
+IMPLIED WARRANTIES ARE DISCLAIMED.
+
+Both are unmodified upstream builds.
