@@ -127,13 +127,32 @@ func (m *Metrics) DashboardJSON() http.Handler {
 	})
 }
 
+// dashboardPage is the shell the browser receives. The numbers are not baked
+// into the markup: the first snapshot ships alongside it as JSON and the page
+// draws it. That leaves one renderer — the same one that handles every later
+// poll — instead of two that have to be kept in step.
+type dashboardPage struct {
+	// template.JS, not template.HTML: inside a <script> element html/template
+	// applies JS-context escaping, and template.HTML would be quoted into a
+	// string literal rather than emitted as the object it already is.
+	Boot template.JS
+}
+
 // Dashboard serves the live HTML metrics dashboard.
 func (m *Metrics) Dashboard() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
-		defer m.mu.Unlock()
+		d := m.dashboardData()
+		m.mu.Unlock()
+
+		// json.Marshal escapes <, > and & by default, so the payload cannot
+		// break out of the script element it is embedded in.
+		boot, err := json.Marshal(d)
+		if err != nil {
+			boot = []byte("{}")
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = dashboardTmpl.Execute(w, m.dashboardData())
+		_ = dashboardTmpl.Execute(w, dashboardPage{Boot: template.JS(boot)})
 	})
 }
 
@@ -194,43 +213,33 @@ a{color:#7fd4ff}
 <body>
 <h1>Bifrost<span class="sub">LLM gateway</span></h1>
 <div class="totals">
-  <div class="total"><div class="v" id="v-cost">${{printf "%.6f" .TotalCostUSD}}</div><div class="l">total cost (USD)</div></div>
-  <div class="total"><div class="v" id="v-req">{{.TotalRequests}}</div><div class="l">requests</div></div>
-  <div class="total"><div class="v" id="v-tin">{{.TotalTokensIn}}</div><div class="l">tokens in</div></div>
-  <div class="total"><div class="v" id="v-tout">{{.TotalTokensOut}}</div><div class="l">tokens out</div></div>
-  <div class="total"><div class="v" id="v-chars">{{.TotalChars}}</div><div class="l">chars spoken</div></div>
-  <div class="total"><div class="v" id="v-hits">{{.TotalCacheHits}}</div><div class="l">cache hits</div></div>
-  <div class="total"><div class="v" id="v-rate">{{.CacheHitRate}}</div><div class="l">cache hit rate</div></div>
-  <div class="total"><div class="v" id="v-up">{{.Uptime}}</div><div class="l">uptime</div></div>
+  <div class="total"><div class="v" id="v-cost">—</div><div class="l">total cost (USD)</div></div>
+  <div class="total"><div class="v" id="v-req">—</div><div class="l">requests</div></div>
+  <div class="total"><div class="v" id="v-tin">—</div><div class="l">tokens in</div></div>
+  <div class="total"><div class="v" id="v-tout">—</div><div class="l">tokens out</div></div>
+  <div class="total"><div class="v" id="v-chars">—</div><div class="l">chars spoken</div></div>
+  <div class="total"><div class="v" id="v-hits">—</div><div class="l">cache hits</div></div>
+  <div class="total"><div class="v" id="v-rate">—</div><div class="l">cache hit rate</div></div>
+  <div class="total"><div class="v" id="v-up">—</div><div class="l">uptime</div></div>
 </div>
 
 <h2>By model / app</h2>
 <table>
 <thead><tr><th>model</th><th>app</th><th>requests</th><th>tokens in</th><th>tokens out</th><th>chars</th><th>cost</th><th>avg latency</th><th>errors</th><th>retries</th><th>fallbacks</th><th>cache h/m</th></tr></thead>
-<tbody id="rows">
-{{range .Rows}}<tr>
-<td class="mono" data-label="model">{{.Model}}</td><td data-label="app">{{.App}}</td><td data-label="requests">{{.Requests}}</td><td data-label="tokens in">{{.TokensIn}}</td><td data-label="tokens out">{{.TokensOut}}</td><td data-label="chars spoken">{{.Chars}}</td>
-<td class="mono" data-label="cost">${{printf "%.6f" .CostUSD}}</td><td class="mono" data-label="avg latency">{{printf "%.0f" .AvgLatMs}} ms</td>
-<td class="{{if .Errors}}err{{end}}" data-label="errors">{{.Errors}}</td>
-<td data-label="retries">{{.Retries}}</td><td data-label="fallbacks">{{.Fallbacks}}</td><td data-label="cache hits/miss">{{.CacheHits}}/{{.CacheMisses}}</td>
-</tr>{{end}}
-</tbody>
+<tbody id="rows"></tbody>
 </table>
 
 <h2>Recent requests</h2>
 <table>
 <thead><tr><th>time (UTC)</th><th>app</th><th>model</th><th>endpoint</th><th>status</th><th>tok in</th><th>tok out</th><th>cost</th><th>latency</th></tr></thead>
-<tbody id="recent">
-{{range .Recent}}<tr>
-<td class="mono" data-label="time">{{.Time.Format "[REDACTED]"}}</td><td data-label="app">{{.App}}</td><td class="mono" data-label="model">{{.Model}}</td><td class="mono" data-label="endpoint">{{.Endpoint}}</td>
-<td class="{{if .Err}}err{{else}}ok{{end}}" data-label="status">{{.Status}}</td>
-<td data-label="tokens in">{{.TokensIn}}</td><td data-label="tokens out">{{.TokensOut}}</td><td class="mono" data-label="cost">${{printf "%.6f" .CostUSD}}</td><td class="mono" data-label="latency">{{printf "%.0f" .DurationMs}} ms</td>
-</tr>{{end}}
-</tbody>
+<tbody id="recent"></tbody>
 </table>
 
 <p class="foot"><span id="live" class="dot"></span><span id="status">connecting…</span></p>
 <p class="foot">Prometheus format at <a href="/metrics">/metrics</a> · JSON at <a href="/dashboard.json">/dashboard.json</a></p>
+<noscript><p class="foot err">This page draws its numbers with JavaScript. The same data is at <a href="/dashboard.json">/dashboard.json</a> and <a href="/metrics">/metrics</a>.</p></noscript>
+
+<script type="application/json" id="boot">{{.Boot}}</script>
 
 <script>
 (function () {
@@ -336,6 +345,15 @@ a{color:#7fd4ff}
       .catch(function (e) {
         markLive(false, "disconnected (" + e.message + ") · retrying");
       });
+  }
+
+  // The first snapshot ships inside the page, so the first paint costs no
+  // round trip. The poll below only has to keep it current.
+  try {
+    apply(JSON.parse(document.getElementById("boot").textContent));
+    markLive(true, "live · updated " + new Date().toLocaleTimeString());
+  } catch (e) {
+    markLive(false, "no initial snapshot (" + e.message + ")");
   }
 
   tick();

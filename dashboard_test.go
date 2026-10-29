@@ -22,8 +22,6 @@ func TestDashboardRenders(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"<title>Bifrost</title>",
-		`data-label="model">coach</td>`,
-		">patzer</td>",
 		"total cost (USD)",
 		"/v1/chat/completions",
 		"/metrics",
@@ -32,9 +30,23 @@ func TestDashboardRenders(t *testing.T) {
 			t.Errorf("dashboard output missing %q", want)
 		}
 	}
-	// The failed request should surface a 502 with the err styling.
-	if !strings.Contains(body, `class="err" data-label="status">502`) {
-		t.Errorf("dashboard missing the errored 502 row:\n%s", body)
+	// The numbers are drawn client-side, so the page carries one snapshot as
+	// JSON rather than a second copy of the markup. Both the healthy row and
+	// the failed one must be in that payload.
+	if !strings.Contains(body, `<script type="application/json" id="boot">`) {
+		t.Error("dashboard has no boot snapshot for the first paint")
+	}
+	for _, want := range []string{`"Model":"coach"`, `"App":"patzer"`, `"Status":502`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("boot snapshot missing %s", want)
+		}
+	}
+	// ...and no server-rendered rows, which would mean two renderers again.
+	if strings.Contains(body, `data-label="model">coach</td>`) {
+		t.Error("dashboard still renders table rows server-side")
+	}
+	if !strings.Contains(body, `<tbody id="rows"></tbody>`) {
+		t.Error("rows table is not an empty mount point")
 	}
 	// The page must not fall back to a whole-document reload: the live updater
 	// polls /dashboard.json and patches the DOM in place.
