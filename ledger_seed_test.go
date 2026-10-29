@@ -38,7 +38,7 @@ func TestDashboardSeededFromLedger(t *testing.T) {
 	}
 
 	m := newMetrics(defaultPricing())
-	m.SeedFromLedger(g.LedgerThisMonth())
+	m.SeedFromLedger(g.Month(), g.LedgerThisMonth())
 	d := m.dashboardData()
 
 	if d.TotalRequests != 2 {
@@ -58,6 +58,25 @@ func TestDashboardSeededFromLedger(t *testing.T) {
 	}
 }
 
+// A month boundary can pass while the process is running. Budgets roll over in
+// the governor; the dashboard seed has to roll over with them, or November 1st
+// would report October's money as November's.
+func TestStaleSeedIsDroppedAtMonthBoundary(t *testing.T) {
+	m := newMetrics(defaultPricing())
+	lastMonth := monthKey(time.Now().AddDate(0, -1, 0))
+	m.SeedFromLedger(lastMonth, []ledgerLine{
+		{Ts: time.Now().Format(time.RFC3339), App: "hermes", Model: "m", Cost: 12.5},
+	})
+
+	d := m.dashboardData()
+	if d.TotalRequests != 0 || d.TotalCostUSD != 0 {
+		t.Fatalf("stale seed still counted: requests=%d cost=%v", d.TotalRequests, d.TotalCostUSD)
+	}
+	if m.seedMonth != "" {
+		t.Errorf("seedMonth not cleared: %q", m.seedMonth)
+	}
+}
+
 // A request made after start-up must add to the seeded baseline, not replace
 // or double it.
 func TestSeededTotalsAccumulate(t *testing.T) {
@@ -71,7 +90,7 @@ func TestSeededTotalsAccumulate(t *testing.T) {
 
 	g := newGovernor(Config{LedgerFile: ledger})
 	m := newMetrics(defaultPricing())
-	m.SeedFromLedger(g.LedgerThisMonth())
+	m.SeedFromLedger(g.Month(), g.LedgerThisMonth())
 
 	// A live request through the normal recording path.
 	m.Record("coach", "deepseek-v4-flash", "hermes", "/v1/chat/completions", 200, 10, 5, time.Millisecond, false)

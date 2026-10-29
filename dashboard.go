@@ -47,6 +47,7 @@ type dashboardData struct {
 // dashboardData builds a snapshot of the metrics for rendering. Called with the
 // metrics mutex already held.
 func (m *Metrics) dashboardData() dashboardData {
+	m.clearStaleSeed()
 	maSet := map[string]bool{}
 	for k := range m.tokensIn {
 		maSet[k] = true

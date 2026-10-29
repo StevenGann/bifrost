@@ -183,6 +183,13 @@ func (g *Governor) LedgerThisMonth() []ledgerLine {
 	return out
 }
 
+// Month is the UTC month the governor is currently accounting for.
+func (g *Governor) Month() string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.month
+}
+
 func monthOf(ts string) string {
 	t, err := time.Parse(time.RFC3339, ts)
 	if err != nil {

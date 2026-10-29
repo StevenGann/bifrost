@@ -100,7 +100,8 @@ type Metrics struct {
 	// process started, reconstructed from the spend ledger. It is kept apart
 	// from the live counters so the Prometheus counters stay process-scoped
 	// (a counter that starts non-zero after a restart lies to rate()).
-	seed map[string]seedAgg // "model|app"
+	seed      map[string]seedAgg // "model|app"
+	seedMonth string             // UTC month the seed belongs to
 }
 
 // seedAgg is one row of the ledger collapsed by model and tenant.
@@ -116,9 +117,22 @@ type seedAgg struct {
 // baseline. Without it a restart makes the month's spend look as if it never
 // happened: the ledger still has it, but the dashboard only ever showed the
 // counters of the running process.
-func (m *Metrics) SeedFromLedger(lines []ledgerLine) {
+// clearStaleSeed drops the seed once a UTC month boundary has passed while the
+// process kept running. Budgets roll over in the governor; the dashboard has to
+// roll over with them or it would report last month's money as this month's.
+// Called with the metrics mutex held.
+func (m *Metrics) clearStaleSeed() {
+	if m.seedMonth == "" || m.seedMonth == monthKey(time.Now()) {
+		return
+	}
+	m.seed = nil
+	m.seedMonth = ""
+}
+
+func (m *Metrics) SeedFromLedger(month string, lines []ledgerLine) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.seedMonth = month
 	if m.seed == nil {
 		m.seed = make(map[string]seedAgg)
 	}
@@ -199,9 +213,11 @@ func (m *Metrics) Record(clientModel, upstreamModel, app, endpoint string, statu
 		Err:        isErr,
 	})
 
-	if c > 0 {
-		governor.Record(app, clientModel, upstreamModel, tokIn, tokOut, c)
-	}
+	// Every request is booked, including free ones. Recording only billable
+	// traffic made the durable request count disagree with the live one: local
+	// and cached requests vanished from the dashboard on restart even though
+	// their cost was zero. A zero-cost line changes no budget.
+	governor.Record(app, clientModel, upstreamModel, tokIn, tokOut, c)
 	return c
 }
 
