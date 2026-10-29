@@ -14,7 +14,14 @@ IMAGE=${BIFROST_IMAGE:?set BIFROST_IMAGE to the image under test}
 BASE=http://127.0.0.1:11434
 ADMIN=test-admin-key
 OUT=$(mktemp)
-trap 'rm -f "$OUT"; docker compose -p "$PROJECT" -f "$COMPOSE_FILE" down -v --remove-orphans >/dev/null 2>&1 || true' EXIT
+LOG=$(mktemp)
+# Everything below is tee'd so CI can publish it as a step summary.
+exec > >(tee "$LOG") 2>&1
+trap 'status_code=$?; docker compose -p "$PROJECT" -f "$COMPOSE_FILE" down -v --remove-orphans >/dev/null 2>&1 || true
+  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    { echo "### portability test (exit $status_code)"; echo "\`\`\`"; cat "$LOG"; echo "\`\`\`"; } >> "$GITHUB_STEP_SUMMARY"
+  fi
+  rm -f "$OUT" "$LOG"' EXIT
 
 pass=0
 fail=0
@@ -25,6 +32,7 @@ check() { # check <name> <0|1> [detail]
     pass=$((pass + 1))
   else
     printf 'FAIL %s  %s\n' "$1" "${3:-}"
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::error title=FAIL: $1::${3:-}"; fi
     fail=$((fail + 1))
   fi
 }
@@ -60,7 +68,8 @@ echo "== image: $IMAGE =="
 export BIFROST_IMAGE="$IMAGE"
 if ! dc up -d >/dev/null 2>&1 || ! wait_healthy; then
   echo "FAIL the container did not become healthy"
-  dc logs --tail=40 bifrost || true
+  dc ps -a || true
+  dc logs --tail=60 bifrost || true
   exit 1
 fi
 check "cold start on a fresh volume" 0
