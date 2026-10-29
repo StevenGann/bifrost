@@ -19,7 +19,8 @@ type Backend struct {
 	Name    string
 	BaseURL string
 	APIKey  string
-	Local   bool // true when the backend is on the LAN (skip PII redaction)
+	Local   bool   // true when the backend is on the LAN (skip PII redaction)
+	Kind    string // wire dialect: "" / "openai" (default) or "elevenlabs"
 	Keys    []apiKey
 }
 
@@ -50,6 +51,12 @@ type Config struct {
 	SemanticCache     bool
 	SemanticThreshold float64
 	EmbedModel        string
+	// Speech (POST /v1/audio/speech). Routes are kept separate from chat
+	// routes so an audio target never appears as a chat model in /v1/models.
+	AudioRoutes    map[string]Route
+	Voices         map[string]string // caller-facing voice -> backend voice id
+	DefaultVoice   string
+	TTSCostPerChar float64
 }
 
 // metrics is the package-level collector. It is initialized to a working
@@ -128,6 +135,7 @@ type backendConfig struct {
 	Name      string `json:"name"`
 	BaseURL   string `json:"base_url"`
 	APIKeyEnv string `json:"api_key_env"`
+	Kind      string `json:"kind"`
 	Local     *bool  `json:"local"`
 }
 
@@ -187,6 +195,10 @@ func loadConfig() Config {
 		SemanticCache:     envBool("SEMANTIC_CACHE", false),
 		SemanticThreshold: envFloat("SEMANTIC_THRESHOLD", 0.92),
 		EmbedModel:        envOr("EMBED_MODEL", "embed"),
+		AudioRoutes:       map[string]Route{},
+		Voices:            map[string]string{},
+		DefaultVoice:      envOr("TTS_VOICE", ""),
+		TTSCostPerChar:    envFloat("TTS_COST_PER_CHAR", 0),
 	}
 
 	// Multi-backend config: BACKENDS=[...] + ROUTES={"client":"backend/model"}.
@@ -199,7 +211,7 @@ func loadConfig() Config {
 			if bc.Name == "" || bc.BaseURL == "" {
 				continue
 			}
-			cfg.Backends[bc.Name] = Backend{Name: bc.Name, BaseURL: normalizeBase(bc.BaseURL), APIKey: os.Getenv(bc.APIKeyEnv), Local: backendIsLocal(bc)}
+			cfg.Backends[bc.Name] = Backend{Name: bc.Name, BaseURL: normalizeBase(bc.BaseURL), APIKey: os.Getenv(bc.APIKeyEnv), Local: backendIsLocal(bc), Kind: strings.ToLower(strings.TrimSpace(bc.Kind))}
 			if i == 0 {
 				cfg.Default = bc.Name
 			}
@@ -216,6 +228,30 @@ func loadConfig() Config {
 				}
 				cfg.Routes[name] = Route{Name: name, Backend: backend, Upstream: up}
 			}
+		}
+	}
+
+	// Speech routes: AUDIO_ROUTES={"tts":"elevenlabs/eleven_multilingual_v2"}.
+	// Deliberately separate from ROUTES so an audio target is not advertised as
+	// a chat model by /v1/models and cannot be reached by a chat request.
+	if raw := os.Getenv("AUDIO_ROUTES"); raw != "" {
+		var m map[string]string
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			log.Printf("WARNING: ignoring malformed AUDIO_ROUTES: %v", err)
+		}
+		for name, target := range m {
+			backend, up := splitRoute(target)
+			if backend == "" {
+				backend = cfg.Default
+			}
+			cfg.AudioRoutes[name] = Route{Name: name, Backend: backend, Upstream: up}
+		}
+	}
+	// TTS_VOICES maps a caller-facing voice to a backend voice id, so a client
+	// asking for "alloy" reaches an ElevenLabs voice without knowing its id.
+	if raw := os.Getenv("TTS_VOICES"); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &cfg.Voices); err != nil {
+			log.Printf("WARNING: ignoring malformed TTS_VOICES: %v", err)
 		}
 	}
 
@@ -370,10 +406,12 @@ func main() {
 	mux.HandleFunc("GET /v1/models/{name}", func(w http.ResponseWriter, r *http.Request) { handleOpenAIModelDetail(w, r, cfg) })
 	mux.HandleFunc("POST /v1/chat/completions", governor.Wrap(func(w http.ResponseWriter, r *http.Request) { handleOpenAIChat(w, r, cfg) }))
 	mux.HandleFunc("POST /v1/embeddings", governor.Wrap(func(w http.ResponseWriter, r *http.Request) { handleOpenAIEmbeddings(w, r, cfg) }))
+	mux.HandleFunc("POST /v1/audio/speech", governor.Wrap(func(w http.ResponseWriter, r *http.Request) { handleOpenAISpeech(w, r, cfg) }))
 
 	// Ops
 	mux.Handle("GET /{$}", metrics.Dashboard())
 	mux.Handle("GET /dashboard", metrics.Dashboard())
+	mux.Handle("GET /dashboard.json", metrics.DashboardJSON())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]string{"status": "ok"})
 	})

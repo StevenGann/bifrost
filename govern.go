@@ -58,6 +58,7 @@ type ledgerLine struct {
 	App   string  `json:"app"`
 	Model string  `json:"model"`
 	Cost  float64 `json:"cost"`
+	Chars int     `json:"chars,omitempty"`
 }
 
 // Governor enforces auth, rate limits, and monthly spend budgets, backed by a
@@ -195,6 +196,37 @@ func (g *Governor) Record(app, model string, cost float64) {
 	g.monthSpend[app] += cost
 	g.monthTotal += cost
 	g.appendLocked(app, model, cost)
+}
+
+// RecordAudio books a speech request: characters synthesized and their cost.
+// Speech is priced per character, so it lands in the same ledger with the
+// character count carried alongside the cost.
+func (g *Governor) RecordAudio(app, model string, chars int, cost float64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.rolloverLocked()
+	g.monthSpend[app] += cost
+	g.monthTotal += cost
+	g.appendAudioLocked(app, model, chars, cost)
+}
+
+func (g *Governor) appendAudioLocked(app, model string, chars int, cost float64) {
+	if g.path == "" {
+		return
+	}
+	b, err := json.Marshal(ledgerLine{Ts: time.Now().UTC().Format(time.RFC3339), App: app, Model: model, Cost: cost, Chars: chars})
+	if err != nil {
+		return
+	}
+	f, err := os.OpenFile(g.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		log.Printf("governor: ledger append failed: %v", err)
+		return
+	}
+	defer f.Close()
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		log.Printf("governor: ledger write failed: %v", err)
+	}
 }
 
 func (g *Governor) rolloverLocked() {

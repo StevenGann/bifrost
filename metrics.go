@@ -66,6 +66,7 @@ type requestRecord struct {
 	Status     int
 	TokensIn   int
 	TokensOut  int
+	Chars      int // speech characters, for /v1/audio/speech
 	CostUSD    float64
 	DurationMs float64
 	Err        bool
@@ -89,6 +90,7 @@ type Metrics struct {
 	keyRotations map[string]uint64     // "backend"
 	cacheHits    map[string]uint64     // "model|app"
 	cacheMisses  map[string]uint64     // "model|app"
+	chars        map[string]uint64     // "model|app" — speech characters synthesized
 	semanticHits map[string]uint64     // "model|app"
 	semanticMiss map[string]uint64     // "model|app"
 	circuitTrips map[string]uint64     // "backend"
@@ -110,6 +112,7 @@ func newMetrics(p map[string]pricing) *Metrics {
 		keyRotations: map[string]uint64{},
 		cacheHits:    map[string]uint64{},
 		cacheMisses:  map[string]uint64{},
+		chars:        map[string]uint64{},
 		semanticHits: map[string]uint64{},
 		semanticMiss: map[string]uint64{},
 		circuitTrips: map[string]uint64{},
@@ -159,6 +162,47 @@ func (m *Metrics) Record(clientModel, upstreamModel, app, endpoint string, statu
 		governor.Record(app, upstreamModel, c)
 	}
 	return c
+}
+
+// RecordAudio books a completed speech request. Speech has no tokens and is
+// priced per character, so the caller supplies the cost; the character count
+// rides alongside it into the dashboard and the durable ledger.
+func (m *Metrics) RecordAudio(clientModel, upstreamModel, app, endpoint string, status, chars int, costUSD float64, dur time.Duration, isErr bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ma := clientModel + "|" + app
+	m.requests[ma+"|"+endpoint+"|"+strconv.Itoa(status)]++
+	m.chars[ma] += uint64(chars)
+	m.costUSD[ma] += costUSD
+	if isErr {
+		m.errors[ma+"|"+endpoint]++
+	}
+	h := m.latency[ma]
+	if h == nil {
+		h = &histogram{counts: make([]uint64, len(latencyBuckets))}
+		m.latency[ma] = h
+	}
+	h.observe(dur.Seconds())
+
+	if len(m.recent) >= recentCap {
+		copy(m.recent, m.recent[1:])
+		m.recent = m.recent[:recentCap-1]
+	}
+	m.recent = append(m.recent, requestRecord{
+		Time:       time.Now().UTC(),
+		Model:      clientModel,
+		App:        app,
+		Endpoint:   endpoint,
+		Status:     status,
+		Chars:      chars,
+		CostUSD:    costUSD,
+		DurationMs: dur.Seconds() * 1000,
+		Err:        isErr,
+	})
+
+	if chars > 0 || costUSD > 0 {
+		governor.RecordAudio(app, upstreamModel, chars, costUSD)
+	}
 }
 
 func (m *Metrics) cost(upstreamModel string, tokIn, tokOut int) float64 {

@@ -34,6 +34,10 @@ Secret, Docker secret), never in a ConfigMap or the repo.
 | `CIRCUIT_COOLDOWN` | Seconds before a half-open probe is attempted (default `30`) |
 | `HEALTH_INTERVAL` | Seconds between backend health polls (default `15`; `0` disables) |
 | `KEYPOOL` | JSON map of backend → key list for multi-key rotation (default empty — single key via `api_key_env`) |
+| `AUDIO_ROUTES` | JSON `{"tts":"backend/voice-model"}` — speech routes, kept out of `ROUTES` so they are not advertised as chat models |
+| `TTS_VOICES` | JSON `{"alloy":"<backend voice id>"}` — maps a caller-facing voice to the backend's voice |
+| `TTS_VOICE` | Default backend voice id when the request names none (or names an unmapped short name) |
+| `TTS_COST_PER_CHAR` | USD per character synthesized (default `0`) — recorded in the ledger with the character count |
 
 ```bash
 BACKENDS='[{"name":"deepseek","base_url":"https://api.deepseek.com","api_key_env":"UPSTREAM_API_KEY"}]'
@@ -111,5 +115,35 @@ hours (Mon–Fri 01:00–04:00 and 06:00–10:00 UTC). Override or add models vi
 - `GET /v1/models/{name}` — single model's metadata
 - `POST /v1/chat/completions` — passthrough (OpenAI format)
 - `POST /v1/embeddings` — embeddings (OpenAI format)
+- `POST /v1/audio/speech` — text-to-speech (OpenAI format), translated per backend `kind`
 - `GET /healthz` — liveness
 - `GET /metrics` — Prometheus metrics
+- `GET /dashboard` — live HTML dashboard; `GET /dashboard.json` — the same snapshot as JSON, polled by the page
+
+## Speech
+
+`POST /v1/audio/speech` accepts the OpenAI body — `{model, input, voice,
+response_format}` — and speaks whatever backend the route points at. The
+backend's `kind` selects the dialect:
+
+| `kind` | Upstream shape | Auth |
+|--------|----------------|------|
+| `openai` (default) | `POST /v1/audio/speech` | `Authorization: Bearer` |
+| `elevenlabs` | `POST /v1/text-to-speech/{voice_id}?output_format=…` | `xi-api-key` |
+
+```bash
+BACKENDS='[{"name":"elevenlabs","base_url":"https://api.elevenlabs.io","kind":"elevenlabs","api_key_env":"ELEVENLABS_API_KEY"}]'
+AUDIO_ROUTES='{"tts":"elevenlabs/eleven_multilingual_v2"}'
+TTS_VOICES='{"alloy":"pNInz6obpgDQGcFmaJgB"}'
+TTS_COST_PER_CHAR='0.00018'
+FALLBACKS='{"tts":"tts-local"}'
+```
+
+A failing voice backend falls over to the route named in `FALLBACKS`, the same
+way chat does — the point of routing speech through the gateway. Supported
+`response_format` per kind: `elevenlabs` takes `mp3`, `opus`, `pcm`; `openai`
+takes those plus `aac`, `flac`, `wav`. An unsupported format is a `400` rather
+than a silent substitution.
+
+Speech has no tokens, so the ledger books characters (`"chars"`) alongside cost
+and the dashboard carries a `chars` column.

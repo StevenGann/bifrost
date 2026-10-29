@@ -78,7 +78,11 @@ whole fleet through Bifrost.
   [Configuration](docs/CONFIGURATION.md).
 - **Model catalog** — `/v1/models` returns privacy tier, backend, and pricing.
 - **Embeddings** — Ollama and OpenAI embedding endpoints.
-- **Metrics** — Prometheus `/metrics` plus a live dashboard.
+- **Speech** — OpenAI-compatible `/v1/audio/speech` in front of any voice
+  backend (`kind: openai` or `kind: elevenlabs`), with the same fallback
+  behaviour as chat. See [Configuration → Speech](docs/CONFIGURATION.md#speech).
+- **Metrics** — Prometheus `/metrics` plus a live dashboard that updates in
+  place (no page reloads) from `/dashboard.json`.
 
 ## Documentation
 
