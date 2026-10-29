@@ -141,9 +141,10 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!DOCTYPE htm
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bifrost</title>
 <style>
-body{background:#0a0e1a;color:#c8d6e5;font-family:system-ui,-apple-system,sans-serif;margin:2rem auto;max-width:1000px;padding:0 1rem}
+body{background:#0a0e1a;color:#c8d6e5;font-family:system-ui,-apple-system,sans-serif;margin:2rem auto;max-width:1000px;padding:0 1rem;-webkit-text-size-adjust:100%}
 h1{color:#7fd4ff;font-weight:600}
 h2{color:#9fb8cc;font-size:1rem;margin-top:2rem;text-transform:uppercase;letter-spacing:.05em}
 .sub{color:#6b7a8a;font-weight:400;font-size:1rem;margin-left:.5rem}
@@ -164,6 +165,29 @@ th{color:#7fd4ff;font-weight:600}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 .flash{animation:flash .9s ease-out}
 @keyframes flash{from{background:#16324a}to{background:transparent}}
+/* Phones: totals become a 2-up grid and both tables turn into labelled
+   cards, so nothing scrolls sideways and no column gets clipped. */
+@media (max-width:640px){
+  body{margin:.75rem auto;padding:0 .65rem}
+  h1{font-size:1.3rem}
+  .sub{display:block;margin:.15rem 0 0;font-size:.78rem}
+  h2{font-size:.82rem;margin-top:1.4rem}
+  .totals{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.5rem;margin:1rem 0}
+  .total{padding:.6rem .7rem;min-width:0}
+  .total .v{font-size:1.15rem;overflow-wrap:anywhere}
+  .total .l{font-size:.68rem}
+  table{display:block;font-size:.86rem}
+  thead{display:none}
+  tbody{display:block}
+  tbody tr{display:block;width:100%;box-sizing:border-box;border:1px solid #1e2a3a;border-radius:8px;background:#0d1424;padding:.45rem .7rem .55rem;margin-bottom:.55rem}
+  tbody td{display:flex;justify-content:space-between;align-items:baseline;gap:.75rem;border:0;padding:.16rem 0;text-align:right}
+  tbody td::before{content:attr(data-label);color:#6b7a8a;font-size:.76rem;text-align:left;flex:0 0 auto}
+  tbody td:first-child{border-bottom:1px solid #1e2a3a;margin-bottom:.35rem;padding-bottom:.4rem;font-weight:600;font-size:.95rem;color:#7fd4ff;text-align:left;justify-content:flex-start;overflow-wrap:anywhere}
+  tbody td:first-child::before{content:"";display:none}
+  tbody td[colspan]{justify-content:center;text-align:center}
+  tbody td[colspan]::before{content:"";display:none}
+  .foot{font-size:.72rem}
+}
 a{color:#7fd4ff}
 </style>
 </head>
@@ -182,25 +206,25 @@ a{color:#7fd4ff}
 
 <h2>By model / app</h2>
 <table>
-<tr><th>model</th><th>app</th><th>requests</th><th>tokens in</th><th>tokens out</th><th>chars</th><th>cost</th><th>avg latency</th><th>errors</th><th>retries</th><th>fallbacks</th><th>cache h/m</th></tr>
+<thead><tr><th>model</th><th>app</th><th>requests</th><th>tokens in</th><th>tokens out</th><th>chars</th><th>cost</th><th>avg latency</th><th>errors</th><th>retries</th><th>fallbacks</th><th>cache h/m</th></tr></thead>
 <tbody id="rows">
 {{range .Rows}}<tr>
-<td class="mono">{{.Model}}</td><td>{{.App}}</td><td>{{.Requests}}</td><td>{{.TokensIn}}</td><td>{{.TokensOut}}</td><td>{{.Chars}}</td>
-<td class="mono">${{printf "%.6f" .CostUSD}}</td><td class="mono">{{printf "%.0f" .AvgLatMs}} ms</td>
-<td class="{{if .Errors}}err{{end}}">{{.Errors}}</td>
-<td>{{.Retries}}</td><td>{{.Fallbacks}}</td><td>{{.CacheHits}}/{{.CacheMisses}}</td>
+<td class="mono" data-label="model">{{.Model}}</td><td data-label="app">{{.App}}</td><td data-label="requests">{{.Requests}}</td><td data-label="tokens in">{{.TokensIn}}</td><td data-label="tokens out">{{.TokensOut}}</td><td data-label="chars spoken">{{.Chars}}</td>
+<td class="mono" data-label="cost">${{printf "%.6f" .CostUSD}}</td><td class="mono" data-label="avg latency">{{printf "%.0f" .AvgLatMs}} ms</td>
+<td class="{{if .Errors}}err{{end}}" data-label="errors">{{.Errors}}</td>
+<td data-label="retries">{{.Retries}}</td><td data-label="fallbacks">{{.Fallbacks}}</td><td data-label="cache hits/miss">{{.CacheHits}}/{{.CacheMisses}}</td>
 </tr>{{end}}
 </tbody>
 </table>
 
 <h2>Recent requests</h2>
 <table>
-<tr><th>time (UTC)</th><th>app</th><th>model</th><th>endpoint</th><th>status</th><th>tok in</th><th>tok out</th><th>cost</th><th>latency</th></tr>
+<thead><tr><th>time (UTC)</th><th>app</th><th>model</th><th>endpoint</th><th>status</th><th>tok in</th><th>tok out</th><th>cost</th><th>latency</th></tr></thead>
 <tbody id="recent">
 {{range .Recent}}<tr>
-<td class="mono">{{.Time.Format "15:04:05"}}</td><td>{{.App}}</td><td class="mono">{{.Model}}</td><td class="mono">{{.Endpoint}}</td>
-<td class="{{if .Err}}err{{else}}ok{{end}}">{{.Status}}</td>
-<td>{{.TokensIn}}</td><td>{{.TokensOut}}</td><td class="mono">${{printf "%.6f" .CostUSD}}</td><td class="mono">{{printf "%.0f" .DurationMs}} ms</td>
+<td class="mono" data-label="time">{{.Time.Format "[REDACTED]"}}</td><td data-label="app">{{.App}}</td><td class="mono" data-label="model">{{.Model}}</td><td class="mono" data-label="endpoint">{{.Endpoint}}</td>
+<td class="{{if .Err}}err{{else}}ok{{end}}" data-label="status">{{.Status}}</td>
+<td data-label="tokens in">{{.TokensIn}}</td><td data-label="tokens out">{{.TokensOut}}</td><td class="mono" data-label="cost">${{printf "%.6f" .CostUSD}}</td><td class="mono" data-label="latency">{{printf "%.0f" .DurationMs}} ms</td>
 </tr>{{end}}
 </tbody>
 </table>
@@ -229,18 +253,18 @@ a{color:#7fd4ff}
     if (!rows || !rows.length) return '<tr><td colspan="12" class="foot">no traffic yet</td></tr>';
     return rows.map(function (r) {
       return '<tr>' +
-        '<td class="mono">' + esc(r.Model) + '</td>' +
-        '<td>' + esc(r.App) + '</td>' +
-        '<td>' + num(r.Requests) + '</td>' +
-        '<td>' + num(r.TokensIn) + '</td>' +
-        '<td>' + num(r.TokensOut) + '</td>' +
-        '<td>' + num(r.Chars) + '</td>' +
-        '<td class="mono">' + money(r.CostUSD) + '</td>' +
-        '<td class="mono">' + Math.round(r.AvgLatMs) + ' ms</td>' +
-        '<td class="' + (r.Errors ? 'err' : '') + '">' + num(r.Errors) + '</td>' +
-        '<td>' + num(r.Retries) + '</td>' +
-        '<td>' + num(r.Fallbacks) + '</td>' +
-        '<td>' + num(r.CacheHits) + '/' + num(r.CacheMisses) + '</td>' +
+        '<td class="mono" data-label="model">' + esc(r.Model) + '</td>' +
+        '<td data-label="app">' + esc(r.App) + '</td>' +
+        '<td data-label="requests">' + num(r.Requests) + '</td>' +
+        '<td data-label="tokens in">' + num(r.TokensIn) + '</td>' +
+        '<td data-label="tokens out">' + num(r.TokensOut) + '</td>' +
+        '<td data-label="chars spoken">' + num(r.Chars) + '</td>' +
+        '<td class="mono" data-label="cost">' + money(r.CostUSD) + '</td>' +
+        '<td class="mono" data-label="avg latency">' + Math.round(r.AvgLatMs) + ' ms</td>' +
+        '<td class="' + (r.Errors ? 'err' : '') + '" data-label="errors">' + num(r.Errors) + '</td>' +
+        '<td data-label="retries">' + num(r.Retries) + '</td>' +
+        '<td data-label="fallbacks">' + num(r.Fallbacks) + '</td>' +
+        '<td data-label="cache hits/miss">' + num(r.CacheHits) + '/' + num(r.CacheMisses) + '</td>' +
         '</tr>';
     }).join('');
   }
@@ -249,15 +273,15 @@ a{color:#7fd4ff}
     if (!rows || !rows.length) return '<tr><td colspan="9" class="foot">no requests yet</td></tr>';
     return rows.slice(0, 60).map(function (r) {
       return '<tr>' +
-        '<td class="mono">' + clock(r.Time) + '</td>' +
-        '<td>' + esc(r.App) + '</td>' +
-        '<td class="mono">' + esc(r.Model) + '</td>' +
-        '<td class="mono">' + esc(r.Endpoint) + '</td>' +
-        '<td class="' + (r.Err ? 'err' : 'ok') + '">' + r.Status + '</td>' +
-        '<td>' + num(r.TokensIn) + '</td>' +
-        '<td>' + num(r.TokensOut) + '</td>' +
-        '<td class="mono">' + money(r.CostUSD) + '</td>' +
-        '<td class="mono">' + Math.round(r.DurationMs) + ' ms</td>' +
+        '<td class="mono" data-label="time">' + clock(r.Time) + '</td>' +
+        '<td data-label="app">' + esc(r.App) + '</td>' +
+        '<td class="mono" data-label="model">' + esc(r.Model) + '</td>' +
+        '<td class="mono" data-label="endpoint">' + esc(r.Endpoint) + '</td>' +
+        '<td class="' + (r.Err ? 'err' : 'ok') + '" data-label="status">' + r.Status + '</td>' +
+        '<td data-label="tokens in">' + num(r.TokensIn) + '</td>' +
+        '<td data-label="tokens out">' + num(r.TokensOut) + '</td>' +
+        '<td class="mono" data-label="cost">' + money(r.CostUSD) + '</td>' +
+        '<td class="mono" data-label="latency">' + Math.round(r.DurationMs) + ' ms</td>' +
         '</tr>';
     }).join('');
   }

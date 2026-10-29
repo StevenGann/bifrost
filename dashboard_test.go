@@ -22,7 +22,7 @@ func TestDashboardRenders(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"<title>Bifrost</title>",
-		`class="mono">coach</td>`,
+		`data-label="model">coach</td>`,
 		">patzer</td>",
 		"total cost (USD)",
 		"/v1/chat/completions",
@@ -33,7 +33,7 @@ func TestDashboardRenders(t *testing.T) {
 		}
 	}
 	// The failed request should surface a 502 with the err styling.
-	if !strings.Contains(body, `class="err">502`) {
+	if !strings.Contains(body, `class="err" data-label="status">502`) {
 		t.Errorf("dashboard missing the errored 502 row:\n%s", body)
 	}
 	// The page must not fall back to a whole-document reload: the live updater
@@ -43,6 +43,14 @@ func TestDashboardRenders(t *testing.T) {
 	}
 	if !strings.Contains(body, "/dashboard.json") {
 		t.Error("dashboard does not reference its live JSON endpoint")
+	}
+	// Mobile: the page must declare a viewport (without it phones render at a
+	// virtual 980px) and every cell must carry the label its card layout shows.
+	if !strings.Contains(body, `<meta name="viewport" content="width=device-width`) {
+		t.Error("dashboard has no viewport meta tag")
+	}
+	if n := strings.Count(body, "data-label="); n < 12 {
+		t.Errorf("only %d data-label attributes; the mobile card layout needs one per cell", n)
 	}
 }
 
