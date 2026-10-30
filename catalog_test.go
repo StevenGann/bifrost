@@ -103,3 +103,29 @@ func TestHandleOpenAIModelDetail(t *testing.T) {
 		t.Errorf("missing model status=%d, want 404", rec.Code)
 	}
 }
+
+// A model priced through the PRICING env must appear with that price in the
+// catalog. defaultPricing() alone made every added backend look free on
+// /v1/models while the ledger charged for it.
+func TestCatalogUsesConfiguredPricing(t *testing.T) {
+	t.Setenv("PRICING", `{"claude-sonnet-5-5":{"input":2,"output":10}}`)
+	cfg := Config{
+		Backends: map[string]Backend{"anthropic": {Name: "anthropic", BaseURL: "https://api.anthropic.com", Kind: "anthropic"}},
+		Routes: map[string]Route{
+			"claude": {Name: "claude", Backend: "anthropic", Upstream: "claude-sonnet-5-5"},
+		},
+	}
+	var found bool
+	for _, m := range cfg.modelCatalog() {
+		if m.ID != "claude" {
+			continue
+		}
+		found = true
+		if m.Pricing.InputPer1M != 2 || m.Pricing.OutputPer1M != 10 {
+			t.Fatalf("pricing = %+v, want 2/10 from PRICING", m.Pricing)
+		}
+	}
+	if !found {
+		t.Fatal("claude not in catalog")
+	}
+}

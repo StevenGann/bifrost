@@ -44,7 +44,10 @@ func capabilities(name string) []string {
 // modelCatalog returns metadata for every client-facing model, sorted by name.
 func (c Config) modelCatalog() []modelMeta {
 	names := c.modelNames()
-	pr := defaultPricing()
+	// loadPricing, not defaultPricing: the catalog must advertise the same
+	// numbers the ledger charges. Anything added through PRICING (Claude,
+	// local rates) was invisible here and showed up as free.
+	pr := loadPricing()
 	out := make([]modelMeta, 0, len(names))
 	for _, name := range names {
 		route := c.Routes[name]
