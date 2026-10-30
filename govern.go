@@ -301,16 +301,16 @@ func (g *Governor) Record(app, route, model string, tokensIn, tokensOut int, cos
 // RecordAudio books a speech request: characters synthesized and their cost.
 // Speech is priced per character, so it lands in the same ledger with the
 // character count carried alongside the cost.
-func (g *Governor) RecordAudio(app, model string, chars int, cost float64, up Served) {
+func (g *Governor) RecordAudio(app, route, model string, chars int, cost float64, up Served) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.rolloverLocked()
 	g.monthSpend[app] += cost
 	g.monthTotal += cost
-	g.appendAudioLocked(app, model, chars, cost, up)
+	g.appendAudioLocked(app, route, model, chars, cost, up)
 }
 
-func (g *Governor) appendAudioLocked(app, model string, chars int, cost float64, up Served) {
+func (g *Governor) appendAudioLocked(app, route, model string, chars int, cost float64, up Served) {
 	if g.path == "" {
 		return
 	}
@@ -319,6 +319,7 @@ func (g *Governor) appendAudioLocked(app, model string, chars int, cost float64,
 		App:     app,
 		Key:     g.store.idForName(app),
 		Model:   model,
+		Route:   route,
 		Cost:    cost,
 		Chars:   chars,
 		Backend: up.Backend,

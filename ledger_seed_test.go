@@ -198,3 +198,50 @@ func TestFlowsCarryBothAxes(t *testing.T) {
 		}
 	}
 }
+
+// A speech line must keep the client-facing route alongside the billed model.
+// Without it the live dashboard shows "tts" but a restart re-seeds from the
+// ledger and relabels the same request as the ElevenLabs model — the row
+// changes name depending on whether the process has restarted, which makes the
+// numbers look like they belong to a different client.
+func TestAudioLedgerKeepsClientRoute(t *testing.T) {
+	dir := t.TempDir()
+	ledger := filepath.Join(dir, "spend.jsonl")
+
+	prev := governor
+	governor = newGovernor(Config{LedgerFile: ledger})
+	defer func() { governor = prev }()
+
+	m := newMetrics(defaultPricing())
+	m.RecordAudio("tts", "eleven_multilingual_v2", "patzer", "/v1/audio/speech",
+		200, 42, 0.00042, time.Millisecond, false, Served{Backend: "elevenlabs"})
+
+	// Re-read the record the way a restart would.
+	g2 := newGovernor(Config{LedgerFile: ledger})
+	if g2.loadErr != nil {
+		t.Fatalf("load: %v", g2.loadErr)
+	}
+	lines := g2.LedgerThisMonth()
+	if len(lines) != 1 {
+		t.Fatalf("ledger has %d lines, want 1", len(lines))
+	}
+	if lines[0].Route != "tts" {
+		t.Fatalf("route = %q, want tts", lines[0].Route)
+	}
+	if lines[0].Model != "eleven_multilingual_v2" {
+		t.Fatalf("model = %q, want the billed model", lines[0].Model)
+	}
+
+	m2 := newMetrics(defaultPricing())
+	m2.SeedFromLedger(g2.Month(), lines)
+	d := m2.dashboardData()
+	if len(d.Rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(d.Rows))
+	}
+	if d.Rows[0].Model != "tts" {
+		t.Fatalf("seeded row model = %q, want the client route tts", d.Rows[0].Model)
+	}
+	if d.Rows[0].Chars != 42 {
+		t.Fatalf("chars = %d, want 42", d.Rows[0].Chars)
+	}
+}

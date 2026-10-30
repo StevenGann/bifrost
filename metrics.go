@@ -311,7 +311,7 @@ func (m *Metrics) RecordAudio(clientModel, upstreamModel, app, endpoint string, 
 	})
 
 	if chars > 0 || costUSD > 0 {
-		governor.RecordAudio(app, upstreamModel, chars, costUSD, up)
+		governor.RecordAudio(app, clientModel, upstreamModel, chars, costUSD, up)
 	}
 }
 
