@@ -453,6 +453,7 @@ func main() {
 		mux.HandleFunc("POST /admin/keys", governor.handleAdminCreate)
 		mux.HandleFunc("GET /admin/keys", governor.handleAdminList)
 		mux.HandleFunc("DELETE /admin/keys/{id}", governor.handleAdminRevoke)
+		mux.HandleFunc("PATCH /admin/keys/{id}", governor.handleAdminRename)
 	}
 
 	// Ollama-native API

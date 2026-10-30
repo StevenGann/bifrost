@@ -21,6 +21,10 @@ import (
 
 const clientKeyPrefix = "bk_"
 
+// errNoSuchKey is returned when an admin operation names an id that is absent
+// or already revoked. Handlers map it to 404.
+var errNoSuchKey = errors.New("unknown or already revoked key")
+
 // clientKey is one tenant credential. The secret itself is never stored: only
 // its SHA-256, so a stolen keys file yields nothing that can be presented.
 type clientKey struct {
@@ -172,6 +176,41 @@ func (s *keyStore) mint(name string, budget float64, rateLimit int) (clientKey, 
 		return clientKey{}, "", err
 	}
 	return k, clientKeyPrefix + id + "_" + secret, nil
+}
+
+// rename changes a key's display name. The token itself is unchanged: a
+// minted key is "bk_<id>_<secret>", so the name is pure metadata — a client
+// that already holds a key keeps working across a rename.
+func (s *keyStore) rename(id, name string) (clientKey, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return clientKey{}, errors.New("name is required")
+	}
+	if len(name) > 64 {
+		return clientKey{}, errors.New("name too long (max 64)")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k, ok := s.byID[id]
+	if !ok || !k.live() {
+		return clientKey{}, errNoSuchKey
+	}
+	if prev, ok := s.byName[name]; ok && prev.ID != id && prev.live() {
+		return clientKey{}, fmt.Errorf("a live key named %q already exists", name)
+	}
+	old := k.Name
+	delete(s.byName, old)
+	k.Name = name
+	s.byName[name] = k
+	s.dirty = true
+	if err := s.saveLocked(); err != nil {
+		k.Name = old
+		delete(s.byName, name)
+		s.byName[old] = k
+		return clientKey{}, err
+	}
+	return *k, nil
 }
 
 // lookup resolves a presented token. Bifrost-minted tokens carry their id so
@@ -395,4 +434,34 @@ func (g *Governor) handleAdminRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("keys: revoked %s", id)
 	w.WriteHeader(204)
+}
+
+// handleAdminRename relabels a key without touching its token. Accounting
+// moves to the new name from the next request; ledger lines already written
+// keep the name they were booked under, because rewriting history to match a
+// rename would make the record of spend depend on what something is called now.
+func (g *Governor) handleAdminRename(w http.ResponseWriter, r *http.Request) {
+	if !g.adminAllowed(r) {
+		writeJSON(w, 401, map[string]string{"error": "admin authorization required"})
+		return
+	}
+	id := r.PathValue("id")
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "invalid JSON body"})
+		return
+	}
+	k, err := g.store.rename(id, req.Name)
+	if err != nil {
+		if errors.Is(err, errNoSuchKey) {
+			writeJSON(w, 404, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
+	}
+	log.Printf("keys: renamed %s to %q", id, k.Name)
+	writeJSON(w, 200, k.public())
 }

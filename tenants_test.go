@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -272,4 +273,63 @@ func doAdmin(h func(http.ResponseWriter, *http.Request), method, id, token, body
 	rr := httptest.NewRecorder()
 	h(rr, r)
 	return rr
+}
+
+func TestKeyStoreRename(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "keys.json")
+	s, err := newKeyStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, token, err := s.mint("hermes", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.mint("jeeves", 0, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	// Renaming is metadata only: the token a client already holds must keep
+	// resolving, and it must resolve under the new name.
+	renamed, err := s.rename(k.ID, "guppy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.Name != "guppy" || renamed.ID != k.ID {
+		t.Fatalf("rename returned %+v", renamed)
+	}
+	got, err := s.lookup(token)
+	if err != nil {
+		t.Fatalf("token stopped working across rename: %v", err)
+	}
+	if got.Name != "guppy" {
+		t.Fatalf("lookup name = %q, want guppy", got.Name)
+	}
+	// The old name is free again, and the new one is taken.
+	if _, _, err := s.mint("hermes", 0, 0); err != nil {
+		t.Fatalf("old name should be reusable: %v", err)
+	}
+	if _, _, err := s.mint("guppy", 0, 0); err == nil {
+		t.Fatal("minting a duplicate live name must fail")
+	}
+
+	// Renaming onto another live name is refused.
+	other := s.byName["jeeves"]
+	if _, err := s.rename(other.ID, "guppy"); err == nil {
+		t.Fatal("rename onto a live name must fail")
+	}
+
+	// Unknown id is the 404 path.
+	if _, err := s.rename("deadbeef", "whatever"); !errors.Is(err, errNoSuchKey) {
+		t.Fatalf("unknown id: got %v, want errNoSuchKey", err)
+	}
+
+	// The rename must survive a restart.
+	s2, err := newKeyStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s2.lookup(token); err != nil || got.Name != "guppy" {
+		t.Fatalf("after restart: %+v err=%v", got, err)
+	}
 }
