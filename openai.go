@@ -37,10 +37,18 @@ func handleOpenAIChat(w http.ResponseWriter, r *http.Request, cfg Config) {
 	}
 
 	var resp *http.Response
+	var dialect string // which wire format produced resp
 	err, lastUpstream, retries, fallbacks, served := cfg.resolve(clientModel, func(b Backend, up string) (error, bool) {
+		if isAnthropic(b) {
+			r, e := anthropicAttempt(b, build(up))
+			if e == nil {
+				resp, dialect = r, "anthropic"
+			}
+			return e, false
+		}
 		r, e := rawAttempt(b, "/v1/chat/completions", build(up))
 		if e == nil {
-			resp = r
+			resp, dialect = r, "openai"
 		}
 		return e, false
 	})
@@ -60,9 +68,24 @@ func handleOpenAIChat(w http.ResponseWriter, r *http.Request, cfg Config) {
 	}
 
 	defer resp.Body.Close()
+	var usage Usage
+
+	if dialect == "anthropic" {
+		// Errors arrive as JSON even when the caller asked for a stream, so the
+		// status code decides the shape, not the request.
+		if stream && resp.StatusCode < 400 {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(resp.StatusCode)
+			_ = copyAnthropicStream(resp.Body, w, clientModel, &usage)
+		} else {
+			writeAnthropicResponse(resp, w, clientModel, &usage)
+		}
+		metrics.Record(clientModel, lastUpstream, app, "/v1/chat/completions", resp.StatusCode, usage.PromptTokens, usage.CompletionTokens, time.Since(start), resp.StatusCode >= 400, served)
+		return
+	}
+
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.WriteHeader(resp.StatusCode)
-	var usage Usage
 	if stream {
 		copyStream(resp.Body, w, &usage)
 	} else {

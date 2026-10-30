@@ -175,6 +175,43 @@ hours (Mon–Fri 01:00–04:00 and 06:00–10:00 UTC). Override or add models vi
 - `GET /dashboard` — live HTML dashboard; `GET /dashboard.json` — the same snapshot as JSON, polled by the page
 - `POST /admin/keys` — mint a tenant key (returns the secret once); `GET /admin/keys` — list tenants with spend and last use; `DELETE /admin/keys/{id}` — revoke. Only registered when `ADMIN_KEY` is set, and each requires `Authorization: Bearer $ADMIN_KEY`
 
+## Anthropic
+
+Anthropic is not OpenAI-shaped, so a backend with `kind: anthropic` gets a
+translation layer instead of a pass-through. Clients keep sending OpenAI chat
+completions; Bifrost sends Messages.
+
+| Client (OpenAI) | Upstream (Anthropic) |
+|---|---|
+| `POST /v1/chat/completions` | `POST /v1/messages` |
+| `Authorization: Bearer` | `x-api-key` + `anthropic-version: 2023-06-01` |
+| `messages[]` with a `system` role | top-level `system` string |
+| `tool_calls` / `role: tool` | `tool_use` / `tool_result` blocks |
+| `tools[].function.parameters` | `tools[].input_schema` |
+| `stop` | `stop_sequences` |
+| `usage.prompt_tokens` | `usage.input_tokens` |
+
+```bash
+BACKENDS='[{"name":"anthropic","base_url":"https://api.anthropic.com","kind":"anthropic","api_key_env":"ANTHROPIC_API_KEY"}]'
+ROUTES='{"claude":"anthropic/claude-sonnet-5-5"}'
+PRICING='{"claude-sonnet-5-5":{"input":2,"output":10}}'
+```
+
+Things worth knowing:
+
+- **`max_tokens` is required upstream** and often absent from OpenAI bodies.
+  Bifrost fills in 4096 when the request omits both `max_tokens` and
+  `max_completion_tokens`.
+- **Pricing is not built in.** Anthropic models bill at zero unless they appear
+  in `PRICING`, which is the same failure mode as an unpriced DeepSeek model:
+  the request is recorded, the money is not.
+- **Some Claude models reject sampling parameters.** When a `400` names
+  `temperature`, `top_p` or `top_k`, Bifrost retries once without them rather
+  than failing a request the caller could not have known was unsupported.
+  Other `400`s are passed through untouched.
+- **Streaming is translated**, not proxied: Anthropic's named SSE events become
+  OpenAI `chat.completion.chunk` deltas, ending with `data: [DONE]`.
+
 ## Speech
 
 `POST /v1/audio/speech` accepts the OpenAI body — `{model, input, voice,
