@@ -223,6 +223,8 @@ double-count budgets.
 
 ## Non-goals
 
+The full list, with the reasoning, lives in [SCOPE.md](SCOPE.md). In short:
+
 - **A model runner** — vLLM/llama.cpp already own that.
 - **A training pipeline.**
 - **A full vector database, or a retrieval endpoint that implies one** — delegate
@@ -230,5 +232,17 @@ double-count budgets.
 - **An admin UI as a product** — the dashboard is for reading, not for operating
   a fleet of tenants. Per-tenant key management, when it lands, will be an API,
   not a console.
+- **An MCP gateway** — not a refusal but an open question: it is a different
+  seam with its own security model, so it waits until a caller needs it.
+- **SSO, OIDC, teams, roles, business units** — one operator, four keys.
+- **Multi-node clustering** — one binary, one process, one volume.
+
+Breadth in general is open, and borrowing from the enterprise gateways is
+expected — see [SCOPE.md](SCOPE.md#we-may-grow-sideways). What stays fixed is
+the shape: one static binary, standard library, two plain files of state.
+
+The test a proposal has to pass before it becomes an initiative is in
+[SCOPE.md](SCOPE.md#the-test): it serves a named caller, it needs no external
+state, and it survives the bad day.
 
 Bifrost stays thin: its value is the *decision layer*, not the compute.

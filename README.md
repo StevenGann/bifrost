@@ -11,8 +11,29 @@ AI backend you own — cloud and local — behind a single URL, and puts routing
 privacy, resilience, metering and caching at that seam. Point any tool at it and
 it works.
 
-Named for the Norse rainbow bridge: it carries requests from Ollama and OpenAI
-clients (Midgard) to the models (Asgard).
+Named for the Norse rainbow bridge: it carries requests from OpenAI clients
+(Midgard) to the models (Asgard).
+
+## Where this sits
+
+Bifrost is a **homelab** gateway, and it is built as an alternative to the
+enterprise AI gateways rather than a smaller copy of one. Those are built for
+organisations — teams, identity providers, budget allocation, procurement,
+clustering, a database behind them. That is a real problem, and it is not this
+one.
+
+This is for a single operator with a handful of agents and a handful of
+backends, on a machine that may be a Raspberry Pi. The job is narrower and the
+constraints are harder: one static binary, no database, no plugin runtime, and
+it has to keep working when one backend is down and the WAN is flaky. What it
+buys you is the thing that matters at that scale — one seam where model access
+is decided, and a receipt for every request naming the agent that spent it.
+
+The scope, the callers it serves and the test a new feature has to pass are in
+**[docs/SCOPE.md](docs/SCOPE.md)**.
+
+> Not affiliated with Maxim AI's Bifrost, or any other project of the same name.
+> Different codebase, different scope.
 
 ```mermaid
 flowchart LR
@@ -156,22 +177,43 @@ feature that doesn't serve one of these is scope, not progress.
 
 ## Planned
 
-Roughly in priority order. Everything is an increment on the above, not a
-rewrite.
+Not a roadmap with dates — the short list of things that clear the scope test
+and serve a caller we have.
 
-- **More vendor dialects behind `kind`** — a native Anthropic backend is the
-  next one, so Claude is a route entry rather than a proxy.
 - **Per-plan accounting** — spend broken out by the key pool's `plan` label, so
   "this month ran on the off-peak key" is a number rather than an inference.
   Per-tenant spend already appears in `/admin/keys`.
+- **Keeping the paid escalation honest** — the Claude routes exist, are priced in
+  the catalogue, and currently fail upstream for want of credit. Making that
+  visible on the dashboard as a first-class state, rather than only in the error
+  path, is worth more than another adapter.
 
-## Not planned
+## What we won't become
 
+Structural, not aesthetic — each one presupposes an organisation and would break
+the shape before it improved anything. The reasoning is in
+[docs/SCOPE.md](docs/SCOPE.md):
+
+- **SSO / OIDC / teams / roles / business units** — one operator, four keys.
+- **Multi-node clustering** — one binary, one process, one volume.
+- **Billing and invoicing** — the ledger records spend; turning it into money
+  owed is an accounting product.
+- **An admin UI as a product** — the dashboard is for reading, not for operating
+  a fleet of tenants.
 - **A model runner** — vLLM and llama.cpp own that.
 - **A training pipeline.**
-- **A vector database or retrieval service** — delegate to a real store.
-- **An admin UI as a product** — the dashboard is for reading, not for
-  operating a fleet of tenants.
+
+Everything else is a judgement call per feature. **We expect to grow sideways,
+and to borrow from the enterprise gateways** — Maxim's Bifrost included — where
+a feature fits this deployment: failover behaviour, budget and limit models,
+caching strategies, attribution metadata, catalogues, tool seams. Apache-2.0
+code can be borrowed with its headers, NOTICE and attribution intact; what we
+don't import is their *shape* — plugin runtime, database, multi-service
+topology.
+
+The test a proposal has to pass is in [docs/SCOPE.md](docs/SCOPE.md#the-test):
+it answers something we have hit, it needs no external state, and it survives
+the bad day.
 
 Bifrost stays thin on purpose: its value is the decision layer, not the compute.
 
@@ -213,6 +255,8 @@ docker run -d --name bifrost -p 11434:11434 \
 
 ## Documentation
 
+- **[Scope](docs/SCOPE.md)** — who it is for, what it refuses to become, and the
+  test a new feature has to pass. Read this before proposing work.
 - **[Architecture](docs/ARCHITECTURE.md)** — request lifecycle, routing,
   resilience, key pool, privacy, observability, code layout.
 - **[Configuration](docs/CONFIGURATION.md)** — the full environment reference.
