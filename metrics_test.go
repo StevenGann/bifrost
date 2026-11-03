@@ -38,23 +38,23 @@ func TestCostAt(t *testing.T) {
 	peak := time.Date(2026, 9, 7, 2, 0, 0, 0, time.UTC)     // Mon peak
 
 	// flash off-peak: 1M in + 1M out = 0.22 + 0.66 = 0.88
-	if got := m.costAt("deepseek-v4-flash", 1_000_000, 1_000_000, offPeak); got != 0.88 {
+	if got := m.costAt("deepseek-v4-flash", Usage{PromptTokens: 1_000_000, CompletionTokens: 1_000_000}, offPeak); got != 0.88 {
 		t.Errorf("flash off-peak cost = %v, want 0.88", got)
 	}
 	// flash peak: doubled = 1.76
-	if got := m.costAt("deepseek-v4-flash", 1_000_000, 1_000_000, peak); got != 1.76 {
+	if got := m.costAt("deepseek-v4-flash", Usage{PromptTokens: 1_000_000, CompletionTokens: 1_000_000}, peak); got != 1.76 {
 		t.Errorf("flash peak cost = %v, want 1.76", got)
 	}
 	// unknown model = $0
-	if got := m.costAt("llama3", 1_000_000, 1_000_000, offPeak); got != 0 {
+	if got := m.costAt("llama3", Usage{PromptTokens: 1_000_000, CompletionTokens: 1_000_000}, offPeak); got != 0 {
 		t.Errorf("unknown model cost = %v, want 0", got)
 	}
 }
 
 func TestMetricsRender(t *testing.T) {
 	m := newMetrics(defaultPricing())
-	m.Record("coach", "deepseek-v4-flash", "patzer", "/api/chat", 200, 100, 50, 500*time.Millisecond, false, Served{})
-	m.Record("coach", "deepseek-v4-flash", "patzer", "/api/chat", 200, 200, 100, 2*time.Second, false, Served{})
+	m.Record("coach", "deepseek-v4-flash", "patzer", "/api/chat", 200, Usage{PromptTokens: 100, CompletionTokens: 50}, 500*time.Millisecond, false, Served{})
+	m.Record("coach", "deepseek-v4-flash", "patzer", "/api/chat", 200, Usage{PromptTokens: 200, CompletionTokens: 100}, 2*time.Second, false, Served{})
 
 	rec := httptest.NewRecorder()
 	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))

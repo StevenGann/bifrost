@@ -179,6 +179,6 @@ func (c Config) complete(clientModel, app, endpoint string, build func(upstream 
 	if err != nil {
 		status = statusOf(err)
 	}
-	metrics.Record(clientModel, lastUpstream, app, endpoint, status, usage.PromptTokens, usage.CompletionTokens, time.Since(start), err != nil, served)
+	metrics.Record(clientModel, lastUpstream, app, endpoint, status, usage, time.Since(start), err != nil, served)
 	return result, usage, status, err
 }

@@ -60,25 +60,38 @@ type OpenAIUsage struct {
 	PromptTokens        int `json:"prompt_tokens"`
 	CompletionTokens    int `json:"completion_tokens"`
 	PromptTokensDetails struct {
-		CachedTokens int `json:"cached_tokens"`
+		CachedTokens             int `json:"cached_tokens"`
+		CacheWriteTokens         int `json:"cache_write_tokens"`
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	} `json:"prompt_tokens_details"`
 }
 
 // Usage is the flattened token accounting surfaced to metrics.
+//
+// PromptTokens is the WHOLE prompt: cache reads and cache writes included.
+// Anthropic reports input_tokens (uncached only) alongside them, and a caller
+// that adds them up would otherwise under-count the prompt by exactly the
+// cached portion — the part that determines whether the cache is working.
 type Usage struct {
 	PromptTokens     int
 	CompletionTokens int
-	CachedTokens     int
+	CachedTokens     int // read from cache (billed at a discount)
+	CacheWriteTokens int // written to cache (billed at a premium)
 }
 
 func (u *OpenAIUsage) toUsage() Usage {
 	if u == nil {
 		return Usage{}
 	}
+	writes := u.PromptTokensDetails.CacheWriteTokens
+	if writes == 0 {
+		writes = u.PromptTokensDetails.CacheCreationInputTokens
+	}
 	return Usage{
 		PromptTokens:     u.PromptTokens,
 		CompletionTokens: u.CompletionTokens,
 		CachedTokens:     u.PromptTokensDetails.CachedTokens,
+		CacheWriteTokens: writes,
 	}
 }
 

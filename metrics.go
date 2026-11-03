@@ -79,22 +79,24 @@ type Metrics struct {
 	pricing map[string]pricing
 	start   time.Time
 
-	requests     map[string]uint64     // "model|app|endpoint|status"
-	errors       map[string]uint64     // "model|app|endpoint"
-	tokensIn     map[string]uint64     // "model|app"
-	tokensOut    map[string]uint64     // "model|app"
-	costUSD      map[string]float64    // "model|app"
-	latency      map[string]*histogram // "model|app"
-	retries      map[string]uint64     // "model|app"
-	fallbacks    map[string]uint64     // "model|app"
-	keyRotations map[string]uint64     // "backend"
-	cacheHits    map[string]uint64     // "model|app"
-	cacheMisses  map[string]uint64     // "model|app"
-	chars        map[string]uint64     // "model|app" — speech characters synthesized
-	semanticHits map[string]uint64     // "model|app"
-	semanticMiss map[string]uint64     // "model|app"
-	circuitTrips map[string]uint64     // "backend"
-	recent       []requestRecord       // ring buffer (newest last)
+	requests         map[string]uint64     // "model|app|endpoint|status"
+	errors           map[string]uint64     // "model|app|endpoint"
+	tokensIn         map[string]uint64     // "model|app"
+	tokensOut        map[string]uint64     // "model|app"
+	tokensCacheRead  map[string]uint64     // "model|app" — prompt tokens served from a provider cache
+	tokensCacheWrite map[string]uint64     // "model|app" — prompt tokens written into one
+	costUSD          map[string]float64    // "model|app"
+	latency          map[string]*histogram // "model|app"
+	retries          map[string]uint64     // "model|app"
+	fallbacks        map[string]uint64     // "model|app"
+	keyRotations     map[string]uint64     // "backend"
+	cacheHits        map[string]uint64     // "model|app"
+	cacheMisses      map[string]uint64     // "model|app"
+	chars            map[string]uint64     // "model|app" — speech characters synthesized
+	semanticHits     map[string]uint64     // "model|app"
+	semanticMiss     map[string]uint64     // "model|app"
+	circuitTrips     map[string]uint64     // "backend"
+	recent           []requestRecord       // ring buffer (newest last)
 
 	// seed holds the part of the current month that happened before this
 	// process started, reconstructed from the spend ledger. It is kept apart
@@ -203,39 +205,44 @@ func (m *Metrics) SeedFromLedger(month string, lines []ledgerLine) {
 
 func newMetrics(p map[string]pricing) *Metrics {
 	return &Metrics{
-		pricing:      p,
-		start:        time.Now(),
-		requests:     map[string]uint64{},
-		errors:       map[string]uint64{},
-		tokensIn:     map[string]uint64{},
-		tokensOut:    map[string]uint64{},
-		costUSD:      map[string]float64{},
-		latency:      map[string]*histogram{},
-		retries:      map[string]uint64{},
-		fallbacks:    map[string]uint64{},
-		keyRotations: map[string]uint64{},
-		cacheHits:    map[string]uint64{},
-		cacheMisses:  map[string]uint64{},
-		chars:        map[string]uint64{},
-		semanticHits: map[string]uint64{},
-		semanticMiss: map[string]uint64{},
-		circuitTrips: map[string]uint64{},
-		flows:        map[string]*flowAgg{},
-		flowsSeed:    map[string]*flowAgg{},
+		pricing:          p,
+		start:            time.Now(),
+		requests:         map[string]uint64{},
+		errors:           map[string]uint64{},
+		tokensIn:         map[string]uint64{},
+		tokensOut:        map[string]uint64{},
+		tokensCacheRead:  map[string]uint64{},
+		tokensCacheWrite: map[string]uint64{},
+		costUSD:          map[string]float64{},
+		latency:          map[string]*histogram{},
+		retries:          map[string]uint64{},
+		fallbacks:        map[string]uint64{},
+		keyRotations:     map[string]uint64{},
+		cacheHits:        map[string]uint64{},
+		cacheMisses:      map[string]uint64{},
+		chars:            map[string]uint64{},
+		semanticHits:     map[string]uint64{},
+		semanticMiss:     map[string]uint64{},
+		circuitTrips:     map[string]uint64{},
+		flows:            map[string]*flowAgg{},
+		flowsSeed:        map[string]*flowAgg{},
 	}
 }
 
 // Record a completed completion request. clientModel is the caller-facing name
 // used as the metric label; upstreamModel is what cost is priced against. It
 // returns the estimated USD cost and feeds the durable spend ledger.
-func (m *Metrics) Record(clientModel, upstreamModel, app, endpoint string, status int, tokIn, tokOut int, dur time.Duration, isErr bool, up Served) float64 {
+func (m *Metrics) Record(clientModel, upstreamModel, app, endpoint string, status int, u Usage, dur time.Duration, isErr bool, up Served) float64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ma := clientModel + "|" + app
+	tokIn, tokOut := u.PromptTokens, u.CompletionTokens
 	m.requests[ma+"|"+endpoint+"|"+strconv.Itoa(status)]++
 	m.tokensIn[ma] += uint64(tokIn)
 	m.tokensOut[ma] += uint64(tokOut)
-	c := m.cost(upstreamModel, tokIn, tokOut)
+	m.tokensCacheRead[ma] += uint64(u.CachedTokens)
+	m.tokensCacheWrite[ma] += uint64(u.CacheWriteTokens)
+	c := m.cost(upstreamModel, u)
 	m.costUSD[ma] += c
 	foldFlow(m.flows, app, up, tokIn, tokOut, c)
 	if isErr {
@@ -269,7 +276,7 @@ func (m *Metrics) Record(clientModel, upstreamModel, app, endpoint string, statu
 	// traffic made the durable request count disagree with the live one: local
 	// and cached requests vanished from the dashboard on restart even though
 	// their cost was zero. A zero-cost line changes no budget.
-	governor.Record(app, clientModel, upstreamModel, tokIn, tokOut, c, up)
+	governor.Record(app, clientModel, upstreamModel, u, c, up)
 	return c
 }
 
@@ -315,8 +322,8 @@ func (m *Metrics) RecordAudio(clientModel, upstreamModel, app, endpoint string, 
 	}
 }
 
-func (m *Metrics) cost(upstreamModel string, tokIn, tokOut int) float64 {
-	return m.costAt(upstreamModel, tokIn, tokOut, time.Now())
+func (m *Metrics) cost(upstreamModel string, u Usage) float64 {
+	return m.costAt(upstreamModel, u, time.Now())
 }
 
 // RecordRetries adds to the retry counter for a model+app pair.
@@ -373,7 +380,17 @@ func (m *Metrics) RecordCircuitTrip(backend string) {
 	m.circuitTrips[backend]++
 }
 
-func (m *Metrics) costAt(upstreamModel string, tokIn, tokOut int, at time.Time) float64 {
+// cacheWriteMultiplier and cacheReadMultiplier are Anthropic's prompt-cache
+// rates relative to the uncached input price: a 5-minute cache entry costs
+// 1.25x to write and 0.1x to read. Getting these wrong does not change the bill,
+// it changes what the bill looks like — a cache that is working would still
+// appear to cost full price, which is exactly the number a cache is built to move.
+const (
+	cacheWriteMultiplier = 1.25
+	cacheReadMultiplier  = 0.1
+)
+
+func (m *Metrics) costAt(upstreamModel string, u Usage, at time.Time) float64 {
 	p, ok := m.pricing[upstreamModel]
 	if !ok {
 		return 0
@@ -383,7 +400,25 @@ func (m *Metrics) costAt(upstreamModel string, tokIn, tokOut int, at time.Time) 
 		in *= 2
 		out *= 2
 	}
-	return float64(tokIn)*in/1e6 + float64(tokOut)*out/1e6
+	// PromptTokens is the whole prompt; the cached portions are priced apart
+	// and the remainder at the plain input rate.
+	cached, written := u.CachedTokens, u.CacheWriteTokens
+	if cached+written > u.PromptTokens {
+		// A provider that reports already-disjoint counts: treat the overlap as
+		// cached only, so the total can never exceed the prompt.
+		written = u.PromptTokens - cached
+		if written < 0 {
+			written = 0
+		}
+	}
+	plain := u.PromptTokens - cached - written
+	if plain < 0 {
+		plain = 0
+	}
+	return (float64(plain)*in +
+		float64(written)*in*cacheWriteMultiplier +
+		float64(cached)*in*cacheReadMultiplier +
+		float64(u.CompletionTokens)*out) / 1e6
 }
 
 // Handler serves the Prometheus text exposition for the scrape endpoint.
@@ -427,9 +462,15 @@ func (m *Metrics) writeLocked(w io.Writer) {
 		p := strings.SplitN(k, "|", 2)
 		fmt.Fprintf(w, "bifrost_tokens_total{model=%q,app=%q,direction=\"input\"} %d\n", p[0], p[1], m.tokensIn[k])
 		fmt.Fprintf(w, "bifrost_tokens_total{model=%q,app=%q,direction=\"output\"} %d\n", p[0], p[1], m.tokensOut[k])
+		if v := m.tokensCacheRead[k]; v > 0 {
+			fmt.Fprintf(w, "bifrost_cache_tokens_total{model=%q,app=%q,direction=\"read\"} %d\n", p[0], p[1], v)
+		}
+		if v := m.tokensCacheWrite[k]; v > 0 {
+			fmt.Fprintf(w, "bifrost_cache_tokens_total{model=%q,app=%q,direction=\"write\"} %d\n", p[0], p[1], v)
+		}
 	}
 
-	fmt.Fprintf(w, "# HELP bifrost_cost_usd_total Estimated cost (cache-miss rates, peak/off-peak aware).\n")
+	fmt.Fprintf(w, "# HELP bifrost_cost_usd_total Estimated cost (peak/off-peak aware, prompt-cache discounted).\n")
 	fmt.Fprintf(w, "# TYPE bifrost_cost_usd_total counter\n")
 	for _, k := range maKeys {
 		p := strings.SplitN(k, "|", 2)

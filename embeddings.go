@@ -84,11 +84,11 @@ func handleEmbeddings(w http.ResponseWriter, r *http.Request, cfg Config) {
 	}
 	if err != nil {
 		status := errorStatus(statusOf(err))
-		metrics.Record(req.Model, lastUpstream, app, "/api/embeddings", status, 0, 0, time.Since(start), true, served)
+		metrics.Record(req.Model, lastUpstream, app, "/api/embeddings", status, Usage{}, time.Since(start), true, served)
 		writeJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
-	metrics.Record(req.Model, lastUpstream, app, "/api/embeddings", 200, 0, 0, time.Since(start), false, served)
+	metrics.Record(req.Model, lastUpstream, app, "/api/embeddings", 200, Usage{}, time.Since(start), false, served)
 	writeJSON(w, 200, ollamaEmbeddingsResponse{Embedding: result})
 }
 
@@ -128,7 +128,7 @@ func handleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request, cfg Config) 
 	}
 	if err != nil {
 		status := errorStatus(statusOf(err))
-		metrics.Record(clientModel, lastUpstream, app, "/v1/embeddings", status, 0, 0, time.Since(start), true, served)
+		metrics.Record(clientModel, lastUpstream, app, "/v1/embeddings", status, Usage{}, time.Since(start), true, served)
 		writeJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
@@ -138,5 +138,5 @@ func handleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request, cfg Config) 
 	w.WriteHeader(resp.StatusCode)
 	var usage Usage
 	copyBody(resp.Body, w, &usage)
-	metrics.Record(clientModel, lastUpstream, app, "/v1/embeddings", resp.StatusCode, 0, 0, time.Since(start), resp.StatusCode >= 400, served)
+	metrics.Record(clientModel, lastUpstream, app, "/v1/embeddings", resp.StatusCode, Usage{}, time.Since(start), resp.StatusCode >= 400, served)
 }

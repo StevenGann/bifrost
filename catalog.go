@@ -18,6 +18,23 @@ type modelMeta struct {
 	Upstream     string   `json:"upstream"`
 	Capabilities []string `json:"capabilities"`
 	Pricing      pricing  `json:"pricing"` // USD per 1M tokens (cache-miss)
+	// ContextLength is the model's real prompt window. Clients that probe for
+	// it and get nothing fall back to a guess — Hermes guessed 1,000,000 for
+	// claude-opus-5-5 (a substring match on its built-in table) and never
+	// compacted before Anthropic's 200k wall, so every long session ended in a
+	// context-length 400. Advertising the truth is the fix.
+	ContextLength int `json:"context_length,omitempty"`
+}
+
+// defaultContextLength is the window for a routed model, keyed by upstream
+// name prefix. Only entries that have been verified belong here; an unknown
+// model advertises nothing, and the client falls back to its own default.
+func defaultContextLength(upstream string) int {
+	switch {
+	case strings.HasPrefix(upstream, "claude"):
+		return 200_000
+	}
+	return 0
 }
 
 // privacyTier classifies a model: private:* is always private; otherwise local
@@ -56,15 +73,16 @@ func (c Config) modelCatalog() []modelMeta {
 			backend = Backend{Name: route.Backend}
 		}
 		out = append(out, modelMeta{
-			ID:           name,
-			Object:       "model",
-			Created:      0,
-			OwnedBy:      "bifrost",
-			Privacy:      privacyTier(name, backend.Local),
-			Backend:      backend.Name,
-			Upstream:     route.Upstream,
-			Capabilities: capabilities(name),
-			Pricing:      pr[route.Upstream],
+			ID:            name,
+			Object:        "model",
+			Created:       0,
+			OwnedBy:       "bifrost",
+			Privacy:       privacyTier(name, backend.Local),
+			Backend:       backend.Name,
+			Upstream:      route.Upstream,
+			Capabilities:  capabilities(name),
+			Pricing:       pr[route.Upstream],
+			ContextLength: defaultContextLength(route.Upstream),
 		})
 	}
 	return out

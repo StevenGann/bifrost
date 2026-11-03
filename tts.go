@@ -220,7 +220,7 @@ func handleOpenAISpeech(w http.ResponseWriter, r *http.Request, cfg Config) {
 		if ue, ok := err.(*upstreamError); ok && ue.status > 0 {
 			status = ue.status
 		}
-		metrics.Record(req.Model, lastUpstream, app, "/v1/audio/speech", status, 0, 0, time.Since(start), true, Served{})
+		metrics.Record(req.Model, lastUpstream, app, "/v1/audio/speech", status, Usage{}, time.Since(start), true, Served{})
 		writeJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
@@ -232,7 +232,7 @@ func handleOpenAISpeech(w http.ResponseWriter, r *http.Request, cfg Config) {
 	}
 	w.WriteHeader(http.StatusOK)
 	if _, err := io.Copy(w, resp.Body); err != nil {
-		metrics.Record(req.Model, lastUpstream, app, "/v1/audio/speech", 499, 0, 0, time.Since(start), true, Served{})
+		metrics.Record(req.Model, lastUpstream, app, "/v1/audio/speech", 499, Usage{}, time.Since(start), true, Served{})
 		return
 	}
 	chars := len([]rune(input))

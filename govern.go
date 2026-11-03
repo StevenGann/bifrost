@@ -71,13 +71,15 @@ type ledgerLine struct {
 	Model string `json:"model"`           // upstream model, the thing that is billed
 	Route string `json:"route,omitempty"` // client-facing name the caller asked for
 	// Upstream side: which credential paid for this request. Never secret.
-	Backend string  `json:"backend,omitempty"`
-	UpKey   string  `json:"upstream_key,omitempty"`
-	Plan    string  `json:"plan,omitempty"`
-	In      int     `json:"tokens_in,omitempty"`
-	Out     int     `json:"tokens_out,omitempty"`
-	Cost    float64 `json:"cost"`
-	Chars   int     `json:"chars,omitempty"`
+	Backend    string  `json:"backend,omitempty"`
+	UpKey      string  `json:"upstream_key,omitempty"`
+	Plan       string  `json:"plan,omitempty"`
+	In         int     `json:"tokens_in,omitempty"`
+	Out        int     `json:"tokens_out,omitempty"`
+	CacheRead  int     `json:"cache_read,omitempty"`
+	CacheWrite int     `json:"cache_write,omitempty"`
+	Cost       float64 `json:"cost"`
+	Chars      int     `json:"chars,omitempty"`
 }
 
 // Governor enforces auth, rate limits, and monthly spend budgets, backed by a
@@ -289,13 +291,13 @@ func (g *Governor) Check(id Identity) error {
 }
 
 // Record adds cost to the current month and appends it to the ledger.
-func (g *Governor) Record(app, route, model string, tokensIn, tokensOut int, cost float64, up Served) {
+func (g *Governor) Record(app, route, model string, u Usage, cost float64, up Served) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.rolloverLocked()
 	g.monthSpend[app] += cost
 	g.monthTotal += cost
-	g.appendLocked(app, route, model, tokensIn, tokensOut, cost, up)
+	g.appendLocked(app, route, model, u, cost, up)
 }
 
 // RecordAudio books a speech request: characters synthesized and their cost.
@@ -351,22 +353,24 @@ func (g *Governor) rolloverLocked() {
 	}
 }
 
-func (g *Governor) appendLocked(app, route, model string, tokensIn, tokensOut int, cost float64, up Served) {
+func (g *Governor) appendLocked(app, route, model string, u Usage, cost float64, up Served) {
 	if g.path == "" {
 		return
 	}
 	line := ledgerLine{
-		Ts:      time.Now().UTC().Format(time.RFC3339),
-		App:     app,
-		Key:     g.store.idForName(app),
-		Model:   model,
-		Route:   route,
-		In:      tokensIn,
-		Out:     tokensOut,
-		Cost:    cost,
-		Backend: up.Backend,
-		UpKey:   up.Key,
-		Plan:    up.Plan,
+		Ts:         time.Now().UTC().Format(time.RFC3339),
+		App:        app,
+		Key:        g.store.idForName(app),
+		Model:      model,
+		Route:      route,
+		In:         u.PromptTokens,
+		Out:        u.CompletionTokens,
+		CacheRead:  u.CachedTokens,
+		CacheWrite: u.CacheWriteTokens,
+		Cost:       cost,
+		Backend:    up.Backend,
+		UpKey:      up.Key,
+		Plan:       up.Plan,
 	}
 	g.monthLines = append(g.monthLines, line)
 	b, err := json.Marshal(line)
@@ -395,7 +399,7 @@ func (g *Governor) Wrap(next http.HandlerFunc) http.HandlerFunc {
 			if le, ok := err.(*limitError); ok {
 				status = le.Status()
 			}
-			metrics.Record("unauthorized", "unauthorized", "unauthorized", r.URL.Path, status, 0, 0, time.Since(start), true, Served{})
+			metrics.Record("unauthorized", "unauthorized", "unauthorized", r.URL.Path, status, Usage{}, time.Since(start), true, Served{})
 			writeJSON(w, status, map[string]string{"error": err.Error()})
 			return
 		}
@@ -404,7 +408,7 @@ func (g *Governor) Wrap(next http.HandlerFunc) http.HandlerFunc {
 			if le, ok := err.(*limitError); ok {
 				status = le.Status()
 			}
-			metrics.Record(id.Name, id.Name, id.Name, r.URL.Path, status, 0, 0, time.Since(start), true, Served{})
+			metrics.Record(id.Name, id.Name, id.Name, r.URL.Path, status, Usage{}, time.Since(start), true, Served{})
 			writeJSON(w, status, map[string]string{"error": err.Error()})
 			return
 		}

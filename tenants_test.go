@@ -137,7 +137,7 @@ func TestGovernorKeyAuthAndAttribution(t *testing.T) {
 		t.Fatal("expected 401 with anonymous closed")
 	}
 
-	g.Record("hermes", "deepseek-v4-flash", "deepseek-v4-flash", 0, 0, 0.01, Served{})
+	g.Record("hermes", "deepseek-v4-flash", "deepseek-v4-flash", Usage{PromptTokens: 0, CompletionTokens: 0}, 0.01, Served{})
 	b, err := os.ReadFile(ledger)
 	if err != nil {
 		t.Fatal(err)
@@ -204,7 +204,7 @@ func TestGovernorPerKeyLimits(t *testing.T) {
 	g2 := newGovernor(Config{KeysFile: filepath.Join(t.TempDir(), "k2.json")})
 	k2, _, _ := g2.store.mint("budgeted", 0.05, 0)
 	id2 := Identity{Name: k2.Name, KeyID: k2.ID}
-	g2.Record("budgeted", "deepseek-v4-flash", "deepseek-v4-flash", 0, 0, 0.05, Served{})
+	g2.Record("budgeted", "deepseek-v4-flash", "deepseek-v4-flash", Usage{}, 0.05, Served{})
 	if err := g2.Check(id2); err == nil {
 		t.Fatal("per-key budget not applied")
 	}

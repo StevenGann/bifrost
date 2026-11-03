@@ -129,3 +129,14 @@ func TestCatalogUsesConfiguredPricing(t *testing.T) {
 		t.Fatal("claude not in catalog")
 	}
 }
+
+func TestCatalogAdvertisesContextLength(t *testing.T) {
+	// A client that cannot learn the window guesses, and a wrong guess is how
+	// long Claude sessions end in a context-length 400 instead of a compaction.
+	if got := defaultContextLength("claude-opus-5-5"); got != 200_000 {
+		t.Errorf("claude window = %d, want 200000", got)
+	}
+	if got := defaultContextLength("deepseek-v4-flash"); got != 0 {
+		t.Errorf("unverified model advertised %d; it should advertise nothing", got)
+	}
+}

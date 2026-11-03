@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The translation is the whole point of the Anthropic dialect: if a field is
@@ -44,8 +45,15 @@ func TestAnthropicRequestBody(t *testing.T) {
 	if got["max_tokens"] == nil {
 		t.Errorf("max_tokens missing; Anthropic rejects the request without it")
 	}
-	if got["system"] != "be brief" {
-		t.Errorf("system = %v, want the system message lifted out", got["system"])
+	// The system prompt is lifted out as blocks (one text block), because a
+	// cache breakpoint has to sit on the last block of the prefix.
+	sys, _ := got["system"].([]any)
+	if len(sys) != 1 {
+		t.Fatalf("system = %v, want one text block", got["system"])
+	}
+	sysBlock, _ := sys[0].(map[string]any)
+	if sysBlock["type"] != "text" || sysBlock["text"] != "be brief" {
+		t.Errorf("system block = %v, want {type:text text:be brief}", sysBlock)
 	}
 	if got["temperature"] != 0.3 {
 		t.Errorf("temperature = %v", got["temperature"])
@@ -140,8 +148,11 @@ func TestAnthropicResponseTranslation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
-	if usage.PromptTokens != 12 || usage.CompletionTokens != 7 || usage.CachedTokens != 3 {
-		t.Errorf("usage = %+v, want 12/7/3", usage)
+	// input_tokens (12) is the UNCACHED prompt; the 3 cached tokens are a
+	// second, additive count. Reporting 12 would understate the prompt by the
+	// portion the cache is serving.
+	if usage.PromptTokens != 15 || usage.CompletionTokens != 7 || usage.CachedTokens != 3 {
+		t.Errorf("usage = %+v, want 15/7/3 (prompt includes cached)", usage)
 	}
 
 	var got struct {
@@ -183,8 +194,11 @@ func TestAnthropicResponseTranslation(t *testing.T) {
 	if !strings.Contains(c.Message.ToolCalls[0].Function.Arguments, `"q"`) {
 		t.Errorf("tool arguments = %q, want the JSON input re-serialized", c.Message.ToolCalls[0].Function.Arguments)
 	}
-	if got.Usage.TotalTokens != 19 {
-		t.Errorf("total_tokens = %d, want 19", got.Usage.TotalTokens)
+	if got.Usage.TotalTokens != 22 {
+		t.Errorf("total_tokens = %d, want 22 (15 prompt + 7 completion)", got.Usage.TotalTokens)
+	}
+	if !strings.Contains(string(out), `"cache_write_tokens"`) {
+		t.Errorf("usage payload hides the cache-write count:\n%s", out)
 	}
 }
 
@@ -380,5 +394,81 @@ func TestAnthropicDoesNotRetryOther400s(t *testing.T) {
 	}
 	if resp.StatusCode != 400 {
 		t.Fatalf("status = %d, want 400 passed through", resp.StatusCode)
+	}
+}
+
+func TestAnthropicPromptCacheMarkers(t *testing.T) {
+	in := []byte(`{
+		"model":"claude",
+		"messages":[{"role":"system","content":"long instruction block"},
+			{"role":"user","content":"first"}],
+		"tools":[{"type":"function","function":{"name":"a","description":"d","parameters":{"type":"object"}}},
+		         {"type":"function","function":{"name":"b","description":"d","parameters":{"type":"object"}}}]
+	}`)
+	t.Setenv("ANTHROPIC_PROMPT_CACHE", "")
+	out, err := anthropicRequestBody(in, "claude-opus-5-5")
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	var got struct {
+		System []struct {
+			CacheControl *struct{ Type string } `json:"cache_control"`
+		} `json:"system"`
+		Tools []struct {
+			CacheControl *struct{ Type string } `json:"cache_control"`
+		} `json:"tools"`
+		Messages []struct {
+			Content []map[string]any `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("output is not JSON: %v", err)
+	}
+	if len(got.System) != 1 || got.System[0].CacheControl == nil {
+		t.Errorf("system block has no cache breakpoint: %+v", got.System)
+	}
+	if len(got.Tools) != 2 || got.Tools[1].CacheControl == nil {
+		t.Errorf("last tool has no cache breakpoint: %+v", got.Tools)
+	}
+	if got.Tools[0].CacheControl != nil {
+		t.Errorf("first tool should not carry a breakpoint (only the prefix end does)")
+	}
+	last := got.Messages[len(got.Messages)-1].Content
+	if len(last) == 0 || last[len(last)-1]["cache_control"] == nil {
+		t.Errorf("last message block has no cache breakpoint: %+v", last)
+	}
+	if n := strings.Count(string(out), "cache_control"); n > 3 {
+		t.Errorf("%d breakpoints, Anthropic allows 4", n)
+	}
+}
+
+func TestAnthropicPromptCacheDisable(t *testing.T) {
+	t.Setenv("ANTHROPIC_PROMPT_CACHE", "0")
+	in := []byte(`{"model":"claude","messages":[{"role":"system","content":"s"},{"role":"user","content":"u"}]}`)
+	out, err := anthropicRequestBody(in, "claude")
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if strings.Contains(string(out), "cache_control") {
+		t.Errorf("ANTHROPIC_PROMPT_CACHE=0 still emitted breakpoints:\n%s", out)
+	}
+}
+
+func TestCacheTokenCost(t *testing.T) {
+	// Opus list price: $4/M in, $20/M out.
+	pc := map[string]pricing{"claude-opus-5-5": {InputPer1M: 4, OutputPer1M: 20}}
+	m := newMetrics(pc)
+	offPeak := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	// 1M prompt: 900k read (0.1x), 50k written (1.25x), 50k plain.
+	u := Usage{PromptTokens: 1_000_000, CachedTokens: 900_000, CacheWriteTokens: 50_000}
+	got := m.costAt("claude-opus-5-5", u, offPeak)
+	want := 4 * (0.05 + 0.05*1.25 + 0.9*0.1)
+	if diff := got - want; diff > 1e-9 || diff < -1e-9 {
+		t.Errorf("cache-aware cost = %v, want %v (uncached would be 4.0)", got, want)
+	}
+	// A provider that reports disjoint counts cannot make the sum exceed the prompt.
+	u2 := Usage{PromptTokens: 100, CachedTokens: 90, CacheWriteTokens: 90}
+	if c := m.costAt("claude-opus-5-5", u2, offPeak); c < 0 {
+		t.Errorf("negative cost %v", c)
 	}
 }

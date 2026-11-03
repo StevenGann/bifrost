@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -30,17 +31,37 @@ func isAnthropic(b Backend) bool {
 }
 
 // anthropicMessages is the wire request for POST /v1/messages.
+// cacheControl marks a prompt prefix for provider-side caching. Anthropic
+// requires the marker on the LAST block of the prefix it should cache, and
+// allows at most four breakpoints per request.
+type cacheControl struct {
+	Type string `json:"type"`
+}
+
+type anthropicSystemBlock struct {
+	Type         string        `json:"type"`
+	Text         string        `json:"text"`
+	CacheControl *cacheControl `json:"cache_control,omitempty"`
+}
+
+type anthropicTool struct {
+	Name         string        `json:"name"`
+	Description  string        `json:"description"`
+	InputSchema  any           `json:"input_schema"`
+	CacheControl *cacheControl `json:"cache_control,omitempty"`
+}
+
 type anthropicMessages struct {
-	Model         string           `json:"model"`
-	MaxTokens     int              `json:"max_tokens"`
-	System        any              `json:"system,omitempty"`
-	Messages      []map[string]any `json:"messages"`
-	Temperature   *float64         `json:"temperature,omitempty"`
-	TopP          *float64         `json:"top_p,omitempty"`
-	StopSequences []string         `json:"stop_sequences,omitempty"`
-	Stream        bool             `json:"stream,omitempty"`
-	Tools         []map[string]any `json:"tools,omitempty"`
-	ToolChoice    any              `json:"tool_choice,omitempty"`
+	Model         string                 `json:"model"`
+	MaxTokens     int                    `json:"max_tokens"`
+	System        []anthropicSystemBlock `json:"system,omitempty"`
+	Messages      []map[string]any       `json:"messages"`
+	Temperature   *float64               `json:"temperature,omitempty"`
+	TopP          *float64               `json:"top_p,omitempty"`
+	StopSequences []string               `json:"stop_sequences,omitempty"`
+	Stream        bool                   `json:"stream,omitempty"`
+	Tools         []anthropicTool        `json:"tools,omitempty"`
+	ToolChoice    any                    `json:"tool_choice,omitempty"`
 }
 
 // anthropicRequestBody translates an OpenAI chat request into a Messages
@@ -142,7 +163,8 @@ func anthropicRequestBody(raw []byte, upstream string) ([]byte, error) {
 		}
 	}
 	if len(system) > 0 {
-		out.System = strings.Join(system, "\n\n")
+		joined := strings.Join(system, "\n\n")
+		out.System = []anthropicSystemBlock{{Type: "text", Text: joined}}
 	}
 
 	// Anthropic rejects two turns with the same role in a row, which happens
@@ -163,17 +185,58 @@ func anthropicRequestBody(raw []byte, upstream string) ([]byte, error) {
 		if params == nil {
 			params = map[string]any{"type": "object", "properties": map[string]any{}}
 		}
-		out.Tools = append(out.Tools, map[string]any{
-			"name":         name,
-			"description":  desc,
-			"input_schema": params,
+		out.Tools = append(out.Tools, anthropicTool{
+			Name:        name,
+			Description: desc,
+			InputSchema: params,
 		})
 	}
 	if len(out.Tools) > 0 {
 		out.ToolChoice = anthropicToolChoice(in.ToolChoice)
 	}
 
+	if promptCacheEnabled() {
+		markPromptCache(&out)
+	}
+
 	return json.Marshal(out)
+}
+
+// promptCacheEnabled reports whether to attach cache breakpoints. On by
+// default: a prompt that is too small to cache (Anthropic's minimum prefix is
+// ~1k tokens) simply records no entry, while a long session saves ~90% of its
+// input bill. ANTHROPIC_PROMPT_CACHE=0 turns it off without a rebuild if a
+// model or an account objects to the markers.
+func promptCacheEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("ANTHROPIC_PROMPT_CACHE"))) {
+	case "0", "false", "off", "no":
+		return false
+	}
+	return true
+}
+
+// markPromptCache places cache breakpoints on the three stable prefixes an
+// agent resends every turn: the tool definitions, the system prompt, and the
+// conversation up to and including the newest message. Anthropic keeps the
+// marked prefix (5 minutes by default) and bills later hits at a tenth of the
+// input rate. The order matters only in that each breakpoint caches everything
+// before it; three is enough for an agent loop and leaves one spare.
+func markPromptCache(out *anthropicMessages) {
+	cc := &cacheControl{Type: "ephemeral"}
+	if n := len(out.Tools); n > 0 {
+		out.Tools[n-1].CacheControl = cc
+	}
+	if n := len(out.System); n > 0 {
+		out.System[n-1].CacheControl = cc
+	}
+	if n := len(out.Messages); n > 0 {
+		blocks, _ := out.Messages[n-1]["content"].([]any)
+		if len(blocks) > 0 {
+			if last, ok := blocks[len(blocks)-1].(map[string]any); ok {
+				last["cache_control"] = cc
+			}
+		}
+	}
 }
 
 func anthropicToolChoice(v any) any {
@@ -410,9 +473,10 @@ type anthropicResponse struct {
 	} `json:"content"`
 	StopReason string `json:"stop_reason"`
 	Usage      struct {
-		InputTokens          int `json:"input_tokens"`
-		OutputTokens         int `json:"output_tokens"`
-		CacheReadInputTokens int `json:"cache_read_input_tokens"`
+		InputTokens              int `json:"input_tokens"`
+		OutputTokens             int `json:"output_tokens"`
+		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	} `json:"usage"`
 	Error struct {
 		Type    string `json:"type"`
@@ -474,10 +538,14 @@ func openAIFromAnthropic(raw []byte, clientModel string) ([]byte, Usage, error) 
 		}
 	}
 
+	// Anthropic's input_tokens counts only the UNCACHED prompt; the cached
+	// portions are reported separately and must be added back or the prompt
+	// looks a tenth of its real size.
 	usage := Usage{
-		PromptTokens:     ar.Usage.InputTokens,
+		PromptTokens:     ar.Usage.InputTokens + ar.Usage.CacheReadInputTokens + ar.Usage.CacheCreationInputTokens,
 		CompletionTokens: ar.Usage.OutputTokens,
 		CachedTokens:     ar.Usage.CacheReadInputTokens,
+		CacheWriteTokens: ar.Usage.CacheCreationInputTokens,
 	}
 
 	out, err := json.Marshal(map[string]any{
@@ -495,7 +563,9 @@ func openAIFromAnthropic(raw []byte, clientModel string) ([]byte, Usage, error) 
 			"completion_tokens": usage.CompletionTokens,
 			"total_tokens":      usage.PromptTokens + usage.CompletionTokens,
 			"prompt_tokens_details": map[string]any{
-				"cached_tokens": usage.CachedTokens,
+				"cached_tokens":         usage.CachedTokens,
+				"cache_write_tokens":    usage.CacheWriteTokens,
+				"cache_creation_tokens": usage.CacheWriteTokens,
 			},
 		},
 	})
@@ -581,7 +651,9 @@ func copyAnthropicStream(r io.Reader, w http.ResponseWriter, clientModel string,
 				"completion_tokens": usage.CompletionTokens,
 				"total_tokens":      usage.PromptTokens + usage.CompletionTokens,
 				"prompt_tokens_details": map[string]any{
-					"cached_tokens": usage.CachedTokens,
+					"cached_tokens":         usage.CachedTokens,
+					"cache_write_tokens":    usage.CacheWriteTokens,
+					"cache_creation_tokens": usage.CacheWriteTokens,
 				},
 			},
 		}
@@ -605,8 +677,9 @@ func copyAnthropicStream(r io.Reader, w http.ResponseWriter, clientModel string,
 						Index   int    `json:"index"`
 						Message struct {
 							Usage struct {
-								InputTokens          int `json:"input_tokens"`
-								CacheReadInputTokens int `json:"cache_read_input_tokens"`
+								InputTokens              int `json:"input_tokens"`
+								CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+								CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 							} `json:"usage"`
 						} `json:"message"`
 						ContentBlock struct {
@@ -621,7 +694,9 @@ func copyAnthropicStream(r io.Reader, w http.ResponseWriter, clientModel string,
 							StopReason  string `json:"stop_reason"`
 						} `json:"delta"`
 						Usage struct {
-							OutputTokens int `json:"output_tokens"`
+							OutputTokens             int `json:"output_tokens"`
+							CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+							CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 						} `json:"usage"`
 					}
 					if json.Unmarshal([]byte(data), &ev) == nil {
@@ -631,8 +706,11 @@ func copyAnthropicStream(r io.Reader, w http.ResponseWriter, clientModel string,
 						}
 						switch typ {
 						case "message_start":
-							usage.PromptTokens = ev.Message.Usage.InputTokens
+							usage.PromptTokens = ev.Message.Usage.InputTokens +
+								ev.Message.Usage.CacheReadInputTokens +
+								ev.Message.Usage.CacheCreationInputTokens
 							usage.CachedTokens = ev.Message.Usage.CacheReadInputTokens
+							usage.CacheWriteTokens = ev.Message.Usage.CacheCreationInputTokens
 							if !sentRole {
 								sentRole = true
 								if err := emit(map[string]any{"role": "assistant", "content": ""}, nil); err != nil {
@@ -684,6 +762,16 @@ func copyAnthropicStream(r io.Reader, w http.ResponseWriter, clientModel string,
 							}
 							if ev.Usage.OutputTokens > 0 {
 								usage.CompletionTokens = ev.Usage.OutputTokens
+							}
+							// message_delta can restate the cache counts. PromptTokens
+							// always means the whole prompt, so swap the cached portions
+							// out of the old total rather than overwriting it with the
+							// delta's (usually zero) plain input count.
+							if ev.Usage.CacheReadInputTokens > 0 || ev.Usage.CacheCreationInputTokens > 0 {
+								usage.PromptTokens += ev.Usage.CacheReadInputTokens + ev.Usage.CacheCreationInputTokens -
+									usage.CachedTokens - usage.CacheWriteTokens
+								usage.CachedTokens = ev.Usage.CacheReadInputTokens
+								usage.CacheWriteTokens = ev.Usage.CacheCreationInputTokens
 							}
 						case "message_stop":
 							var fr any

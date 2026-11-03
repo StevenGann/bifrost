@@ -93,7 +93,7 @@ func TestSeededTotalsAccumulate(t *testing.T) {
 	m.SeedFromLedger(g.Month(), g.LedgerThisMonth())
 
 	// A live request through the normal recording path.
-	m.Record("coach", "deepseek-v4-flash", "hermes", "/v1/chat/completions", 200, 10, 5, time.Millisecond, false, Served{})
+	m.Record("coach", "deepseek-v4-flash", "hermes", "/v1/chat/completions", 200, Usage{PromptTokens: 10, CompletionTokens: 5}, time.Millisecond, false, Served{})
 
 	d := m.dashboardData()
 	if d.TotalRequests != 2 {
@@ -114,7 +114,7 @@ func TestLedgerLineCarriesRouteAndTokens(t *testing.T) {
 	dir := t.TempDir()
 	ledger := filepath.Join(dir, "spend.jsonl")
 	g := newGovernor(Config{LedgerFile: ledger})
-	g.Record("hermes", "coach", "deepseek-v4-flash", 123, 45, 0.01, Served{})
+	g.Record("hermes", "coach", "deepseek-v4-flash", Usage{PromptTokens: 123, CompletionTokens: 45}, 0.01, Served{})
 
 	b, err := os.ReadFile(ledger)
 	if err != nil {
@@ -159,7 +159,7 @@ func TestFlowsCarryBothAxes(t *testing.T) {
 	// A request handled by this process must add to the same picture.
 	// Record prices from tokens, so keep its own answer rather than assuming a
 	// number: the point is that this line lands on the same flow.
-	live := m.Record("deepseek-v4-flash", "deepseek-v4-flash", "hermes", "chat", 200, 1000, 500, time.Millisecond, false,
+	live := m.Record("deepseek-v4-flash", "deepseek-v4-flash", "hermes", "chat", 200, Usage{PromptTokens: 1000, CompletionTokens: 500}, time.Millisecond, false,
 		Served{Backend: "deepseek", Key: "primary", Plan: "pro"})
 	if live <= 0 {
 		t.Fatalf("live request booked no cost; pricing has no entry for deepseek-v4-flash")
