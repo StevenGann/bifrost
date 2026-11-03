@@ -226,6 +226,41 @@ func TestAnthropicStreamTranslation(t *testing.T) {
 		t.Errorf("usage = %+v, want 9 prompt / 4 completion", usage)
 	}
 
+	// The client must see usage too, not only the ledger: a final chunk with
+	// empty choices and a usage object, after the finish chunk and before
+	// [DONE] — the OpenAI include_usage shape.
+	usageAt := strings.Index(body, `"usage":`)
+	doneAt := strings.Index(body, `data: [DONE]`)
+	finishAt := strings.Index(body, `"finish_reason":"stop"`)
+	if usageAt < 0 {
+		t.Fatalf("no usage chunk in stream:\n%s", body)
+	}
+	if !(finishAt < usageAt && usageAt < doneAt) {
+		t.Errorf("usage chunk out of order: finish=%d usage=%d done=%d", finishAt, usageAt, doneAt)
+	}
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.Contains(line, `"usage":`) {
+			continue
+		}
+		var c struct {
+			Choices []any `json:"choices"`
+			Usage   struct {
+				PromptTokens     int `json:"prompt_tokens"`
+				CompletionTokens int `json:"completion_tokens"`
+				TotalTokens      int `json:"total_tokens"`
+			} `json:"usage"`
+		}
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(strings.TrimSpace(line), "data: ")), &c); err != nil {
+			t.Fatalf("usage chunk not JSON: %v", err)
+		}
+		if len(c.Choices) != 0 {
+			t.Errorf("usage chunk choices = %v, want empty", c.Choices)
+		}
+		if c.Usage.PromptTokens != 9 || c.Usage.CompletionTokens != 4 || c.Usage.TotalTokens != 13 {
+			t.Errorf("client usage = %+v, want 9/4/13", c.Usage)
+		}
+	}
+
 	// Every emitted line must be valid JSON inside the data: prefix.
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)

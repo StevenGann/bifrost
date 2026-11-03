@@ -564,6 +564,32 @@ func copyAnthropicStream(r io.Reader, w http.ResponseWriter, clientModel string,
 		return nil
 	}
 
+	// emitUsage sends the OpenAI include_usage terminal chunk: empty choices,
+	// a usage object. Without it a streaming client sees no token counts at
+	// all, and agents that size their context from reported usage fly blind.
+	// It is sent unconditionally — Bifrost forces include_usage on every
+	// OpenAI-dialect stream too, so callers get the same shape either way.
+	emitUsage := func() {
+		chunk := map[string]any{
+			"id":      "chatcmpl-bifrost",
+			"object":  "chat.completion.chunk",
+			"created": started,
+			"model":   clientModel,
+			"choices": []any{},
+			"usage": map[string]any{
+				"prompt_tokens":     usage.PromptTokens,
+				"completion_tokens": usage.CompletionTokens,
+				"total_tokens":      usage.PromptTokens + usage.CompletionTokens,
+				"prompt_tokens_details": map[string]any{
+					"cached_tokens": usage.CachedTokens,
+				},
+			},
+		}
+		if b, err := json.Marshal(chunk); err == nil {
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+		}
+	}
+
 	for {
 		line, err := br.ReadBytes('\n')
 		if len(line) > 0 {
@@ -579,7 +605,8 @@ func copyAnthropicStream(r io.Reader, w http.ResponseWriter, clientModel string,
 						Index   int    `json:"index"`
 						Message struct {
 							Usage struct {
-								InputTokens int `json:"input_tokens"`
+								InputTokens          int `json:"input_tokens"`
+								CacheReadInputTokens int `json:"cache_read_input_tokens"`
 							} `json:"usage"`
 						} `json:"message"`
 						ContentBlock struct {
@@ -605,6 +632,7 @@ func copyAnthropicStream(r io.Reader, w http.ResponseWriter, clientModel string,
 						switch typ {
 						case "message_start":
 							usage.PromptTokens = ev.Message.Usage.InputTokens
+							usage.CachedTokens = ev.Message.Usage.CacheReadInputTokens
 							if !sentRole {
 								sentRole = true
 								if err := emit(map[string]any{"role": "assistant", "content": ""}, nil); err != nil {
@@ -663,6 +691,7 @@ func copyAnthropicStream(r io.Reader, w http.ResponseWriter, clientModel string,
 								fr = finish
 							}
 							_ = emit(map[string]any{}, fr)
+							emitUsage()
 							if _, err := io.WriteString(w, "data: [DONE]\n\n"); err != nil {
 								return err
 							}
@@ -682,6 +711,7 @@ func copyAnthropicStream(r io.Reader, w http.ResponseWriter, clientModel string,
 				// Upstream closed without message_stop; end the stream cleanly so
 				// the client does not hang waiting for [DONE].
 				_ = emit(map[string]any{}, nil)
+				emitUsage()
 				_, _ = io.WriteString(w, "data: [DONE]\n\n")
 				if fl != nil {
 					fl.Flush()
