@@ -180,6 +180,18 @@ flowchart LR
   `SEMANTIC_THRESHOLD` (cosine similarity). A reworded question hits cache
   instead of upstream. Degrades gracefully — if the embedding backend is down,
   requests simply skip semantic caching.
+- **Provider-side prompt caching** (Anthropic, `ANTHROPIC_PROMPT_CACHE`, on by
+  default): Bifrost does not cache the response, it marks the request so the
+  *provider* caches the prefix. Three `cache_control` breakpoints go on the last
+  tool definition, the last system block and the newest message's last content
+  block. The point is the agent loop: the tool schema, the system prompt and
+  most of the conversation are identical turn to turn, and Anthropic keeps a
+  marked prefix for five minutes at 0.1x the input rate to read (1.25x to
+  write). This is the layer that makes a long session affordable; the LRU above
+  saves a call, this saves most of the call's price.
+
+The two layers are independent and stack: an exact-match hit never reaches the
+upstream, and a miss that shares a prefix still bills a tenth of the input.
 
 ## Observability
 
@@ -187,10 +199,23 @@ flowchart LR
 latency by model and app; plus cache hits/misses, semantic-cache hits/misses,
 circuit trips/open state, backend health, and key rotations. Token counts are
 **accurate, not estimated** — Bifrost injects `stream_options.include_usage` and
-reads the usage block from the final streaming chunk.
+reads the usage block from the final streaming chunk, and a translated stream
+ends with that usage chunk so the client sees the same numbers.
+
+Cache traffic has its own series:
+`bifrost_cache_tokens_total{direction="read"|"write"}` next to
+`bifrost_tokens_total`, and both are recorded per ledger line
+(`cache_read`, `cache_write`). `prompt_tokens` always means the whole prompt,
+including the cached portion.
 
 Cost is priced at DeepSeek's official cache-miss rates, doubled during peak
-hours; override or add models via `PRICING`.
+hours; override or add models via `PRICING`. Provider cache reads and writes
+are priced at 0.1x and 1.25x the input rate respectively.
+
+`/v1/models` carries `context_length` where Bifrost knows the window (200,000
+for `claude*`). A client that probes for it and gets nothing falls back to a
+guess, and a guess above the real limit means it never compacts before the
+upstream refuses the request.
 
 ## Code layout
 

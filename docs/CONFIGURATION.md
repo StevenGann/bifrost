@@ -43,6 +43,7 @@ Secret, Docker secret), never in a ConfigMap or the repo.
 | `TTS_VOICES` | JSON `{"alloy":"<backend voice id>"}` — maps a caller-facing voice to the backend's voice |
 | `TTS_VOICE` | Default backend voice id when the request names none (or names an unmapped short name) |
 | `TTS_COST_PER_CHAR` | USD per character synthesized (default `0`) — recorded in the ledger with the character count |
+| `ANTHROPIC_PROMPT_CACHE` | Attach prompt-cache breakpoints to translated Anthropic requests (default on; `0` disables) |
 
 ```bash
 BACKENDS='[{"name":"deepseek","base_url":"https://api.deepseek.com","api_key_env":"UPSTREAM_API_KEY"}]'
@@ -189,7 +190,9 @@ completions; Bifrost sends Messages.
 | `tool_calls` / `role: tool` | `tool_use` / `tool_result` blocks |
 | `tools[].function.parameters` | `tools[].input_schema` |
 | `stop` | `stop_sequences` |
-| `usage.prompt_tokens` | `usage.input_tokens` |
+| `usage.prompt_tokens` | `usage.input_tokens` + `cache_read_input_tokens` + `cache_creation_input_tokens` |
+| `usage.prompt_tokens_details` | `cache_read_input_tokens`, `cache_creation_input_tokens` |
+| `system` string | `system` block array (a cache breakpoint needs a block to sit on) |
 
 ```bash
 BACKENDS='[{"name":"anthropic","base_url":"https://api.anthropic.com","kind":"anthropic","api_key_env":"ANTHROPIC_API_KEY"}]'
@@ -210,7 +213,26 @@ Things worth knowing:
   than failing a request the caller could not have known was unsupported.
   Other `400`s are passed through untouched.
 - **Streaming is translated**, not proxied: Anthropic's named SSE events become
-  OpenAI `chat.completion.chunk` deltas, ending with `data: [DONE]`.
+  OpenAI `chat.completion.chunk` deltas, ending with `data: [DONE]`. The stream
+  also ends with the OpenAI `usage` chunk (an empty `choices` array carrying
+  token counts), because a client that streams otherwise cannot see its own
+  context or cost.
+- **Prompt caching is on by default.** Bifrost marks three prefixes with
+  `cache_control: {type: ephemeral}`: the last tool definition, the last system
+  block, and the newest message's last content block — the parts an agent
+  resends unchanged every turn. Anthropic keeps a marked prefix for five
+  minutes and serves later hits at a tenth of the input rate; writes cost 1.25x.
+  `ANTHROPIC_PROMPT_CACHE=0` turns the markers off. Prefixes under Anthropic's
+  minimum (~1k tokens) simply record nothing.
+- **Cached tokens are counted honestly.** Anthropic reports `input_tokens` as the
+  uncached remainder; Bifrost reports `prompt_tokens` as the whole prompt and
+  exposes the cached portion separately, so a cache hit looks like a cache hit
+  rather than a shorter conversation. The ledger records `cache_read` and
+  `cache_write` per line and cost applies both rates.
+- **`/v1/models` advertises `context_length`** (200,000 for `claude*`). This is
+  not decoration: an agent that cannot discover the window guesses, and a guess
+  above the real limit means it never compacts before the upstream rejects the
+  request.
 
 ## Speech
 

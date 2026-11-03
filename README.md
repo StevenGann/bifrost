@@ -96,8 +96,10 @@ feature that doesn't serve one of these is scope, not progress.
   same port. A tool that only speaks one can reach a backend that only speaks
   the other.
 - **Model catalog** — `GET /v1/models` returns each model's privacy tier,
-  backend, upstream name, capabilities and per-1M-token pricing, so agents can
-  discover what's available instead of hardcoding names.
+  backend, upstream name, capabilities, per-1M-token pricing and — where it is
+  known — `context_length`, so agents can discover what's available instead of
+  hardcoding names. A client that has to guess a context window tends to guess
+  above the real one, and then never compacts before the upstream rejects it.
 - **Speech** — `POST /v1/audio/speech` (OpenAI shape) in front of any voice
   backend, selected by `kind: openai` or `kind: elevenlabs`, with the same
   fallback semantics as chat. Routes live in `AUDIO_ROUTES` so a voice target
@@ -143,9 +145,10 @@ feature that doesn't serve one of these is scope, not progress.
 - **Per-app auth and rate limits** — `APP_KEYS` (imported as static tenant keys)
   and `RATE_LIMIT`.
 - **Ledger** — every request appends tokens, cost and characters
-  (`LEDGER_FILE`), which is what makes spend attributable rather than guessed.
-- **Metrics** — Prometheus `/metrics` with tokens, cost, latency, errors,
-  cache hits, retries, fallbacks and key rotations.
+  (`LEDGER_FILE`), with the provider-cache read/write split on each line, which
+  is what makes spend attributable rather than guessed.
+- **Metrics** — Prometheus `/metrics` with tokens, cache tokens, cost, latency,
+  errors, cache hits, retries, fallbacks and key rotations.
 - **Live dashboard** — `/dashboard` updates in place from `/dashboard.json`
   every two seconds: no reloads, no dropped scroll position, and it re-lays-out
   as labelled cards on a phone. Totals are month-to-date and are rebuilt from
@@ -161,6 +164,12 @@ feature that doesn't serve one of these is scope, not progress.
 - **Semantic** — opt-in near-neighbour cache using a local embedding backend;
   a reworded question can hit cache. Degrades gracefully when that backend is
   down.
+- **Provider prompt caching** — for backends that support it, the request is
+  marked so the *provider* caches the prefix. Anthropic gets `cache_control`
+  breakpoints on the tool definitions, the system prompt and the conversation so
+  far; a repeated prefix then bills at a tenth of the input rate. Measured on a
+  two-call agent-shaped request: the second call cost 89% less. `ANTHROPIC_PROMPT_CACHE=0`
+  disables it.
 
 ### Deployment
 
@@ -183,10 +192,14 @@ and serve a caller we have.
 - **Per-plan accounting** — spend broken out by the key pool's `plan` label, so
   "this month ran on the off-peak key" is a number rather than an inference.
   Per-tenant spend already appears in `/admin/keys`.
-- **Keeping the paid escalation honest** — the Claude routes exist, are priced in
-  the catalogue, and currently fail upstream for want of credit. Making that
-  visible on the dashboard as a first-class state, rather than only in the error
-  path, is worth more than another adapter.
+- **Reporting the cache saving** — the ledger now records cache reads and writes
+  and prices them correctly, but the dashboard shows spend, not the delta
+  against what the same traffic would have cost uncached. That number is the
+  reason to run a cache at all, and it belongs on the page.
+- **Teaching the catalogue more context lengths** — `claude*` advertises 200k
+  because that is verified. The other backends advertise nothing rather than a
+  guess, which leaves their clients on a default. Verifying each window and
+  publishing it is cheap and removes a class of failure.
 
 ## What we won't become
 
