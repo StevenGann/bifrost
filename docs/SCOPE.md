@@ -31,7 +31,9 @@ Named, because a feature that serves nobody is scope, not progress:
 - **Cassandra** — chat through DeepSeek, on its own key.
 - **Subwave** — chat and speech, on its own key.
 - **Claude routes** — present for the occasions when a paid escalation is
-  worth it. Currently out of credit upstream; the routes stay.
+  worth it. They serve, they are priced, and since 2026-11 they carry prompt-cache
+  breakpoints, which is what makes a long escalation affordable. They are not a
+  default: the cost per call is an order of magnitude above DeepSeek's.
 
 Four backends exist in practice: DeepSeek, Anthropic, an Ollama-compatible
 local endpoint, and ElevenLabs. That list is the deployment today, not a fence
