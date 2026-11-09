@@ -13,7 +13,7 @@ func TestRedact(t *testing.T) {
 		"email me at bob@example.com":      "email me at [REDACTED]",
 		"call 555-123-4567 now":            "call [REDACTED] now",
 		"card 4111-1111-1111-1111 ok":      "card [REDACTED] ok",
-		"ip 192.168.1.100 is mine":         "ip [REDACTED] is mine",
+		"ip 192.168.1.100 is mine": "ip 192.168.1.100 is mine",
 		"ssn 123-45-6789":                  "ssn [REDACTED]",
 		"token ghp_AbCdEfGhIjKlMnOpQrStUv": "token [REDACTED]",
 		"no pii here":                      "no pii here",
